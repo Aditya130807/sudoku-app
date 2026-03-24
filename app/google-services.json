@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "951227824589",
+    "project_id": "sudoku-ryve",
+    "storage_bucket": "sudoku-ryve.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:951227824589:android:70eaaffeba2c0a7d1fac84",
+        "android_client_info": {
+          "package_name": "com.Aditya.sudokuRyve"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAy9q3mI5ARiUVTvKst-nobeo9bdB4ro30"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
