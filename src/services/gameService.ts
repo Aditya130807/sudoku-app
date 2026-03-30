@@ -191,14 +191,49 @@ function countCompletedLevels(progress: Record<number, LevelProgress>): number {
   ).length;
 }
 
+function normalizeSequentialProgress(
+  progress: Record<number, LevelProgress>
+): Record<number, LevelProgress> {
+  const normalized: Record<number, LevelProgress> = {};
+  let progressionOpen = true;
+  let firstAvailableAssigned = false;
+
+  for (const level of LEVELS) {
+    const entry = progress[level.id];
+
+    if (progressionOpen && entry.status === "completed") {
+      normalized[level.id] = {
+        ...entry,
+        status: "completed",
+      };
+      continue;
+    }
+
+    if (progressionOpen && !firstAvailableAssigned) {
+      normalized[level.id] = {
+        ...entry,
+        status: "unlocked",
+      };
+      firstAvailableAssigned = true;
+      progressionOpen = false;
+      continue;
+    }
+
+    normalized[level.id] = {
+      ...entry,
+      status: "locked",
+    };
+  }
+
+  return normalized;
+}
+
 function updateProgressAfterCompletion(
   progress: Record<number, LevelProgress>,
   session: GameSession,
   metrics: GameMetrics
 ): Record<number, LevelProgress> {
-  const updatedProgress = {
-    ...progress,
-  };
+  const updatedProgress = normalizeSequentialProgress(progress);
   const currentProgress = updatedProgress[session.levelId];
 
   updatedProgress[session.levelId] = {
@@ -220,38 +255,26 @@ function updateProgressAfterCompletion(
     completedAt: new Date().toISOString(),
   };
 
-  const nextLevelId = getNextLevelId(session.levelId);
-
-  if (nextLevelId) {
-    const nextLevelProgress = updatedProgress[nextLevelId];
-
-    if (nextLevelProgress.status === "locked") {
-      updatedProgress[nextLevelId] = {
-        ...nextLevelProgress,
-        status: "unlocked",
-      };
-    }
-  }
-
-  return updatedProgress;
+  return normalizeSequentialProgress(updatedProgress);
 }
 
 export const gameService = {
   getLevelCards() {
     const { progress } = gameStore.getState();
+    const normalizedProgress = normalizeSequentialProgress(progress);
 
     return LEVELS.map((level) => ({
       level,
-      progress: progress[level.id],
+      progress: normalizedProgress[level.id],
     }));
   },
 
   getNextPlayableLevelId(): number {
     const { progress } = gameStore.getState();
+    const normalizedProgress = normalizeSequentialProgress(progress);
     const nextLevel =
-      LEVELS.find((level) => progress[level.id].status === "in_progress") ??
-      LEVELS.find((level) => progress[level.id].status === "unlocked") ??
-      LEVELS[0];
+      LEVELS.find((level) => normalizedProgress[level.id].status !== "completed") ??
+      LEVELS[LEVELS.length - 1];
 
     return nextLevel.id;
   },
@@ -263,7 +286,8 @@ export const gameService = {
 
   startLevel(levelId: number, options?: { forceNew?: boolean }): GameActionResult {
     const currentState = gameStore.getState();
-    const levelProgress = currentState.progress[levelId];
+    const normalizedProgress = normalizeSequentialProgress(currentState.progress);
+    const levelProgress = normalizedProgress[levelId];
 
     if (!levelProgress || levelProgress.status === "locked") {
       return {
@@ -294,14 +318,14 @@ export const gameService = {
       activeGame: session,
       lastPlayedLevelId: levelId,
       progress: {
-        ...previousState.progress,
+        ...normalizedProgress,
         [levelId]: {
-          ...previousState.progress[levelId],
+          ...normalizedProgress[levelId],
           status:
-            previousState.progress[levelId].status === "completed"
+            normalizedProgress[levelId].status === "completed"
               ? "completed"
               : "in_progress",
-          attempts: previousState.progress[levelId].attempts + 1,
+          attempts: normalizedProgress[levelId].attempts + 1,
         },
       },
     }));
@@ -690,7 +714,7 @@ export const gameService = {
         ...currentState,
         activeGame: completedSession,
         lastPlayedLevelId: completedSession.levelId,
-        progress: updatedProgress,
+        progress: normalizeSequentialProgress(updatedProgress),
       };
     });
 
@@ -739,13 +763,16 @@ export const gameService = {
       ...currentState,
       activeGame: restoredSession,
       lastPlayedLevelId: restoredSession.levelId,
-      progress: {
+      progress: normalizeSequentialProgress({
         ...currentState.progress,
         [restoredSession.levelId]: {
           ...currentState.progress[restoredSession.levelId],
-          status: "in_progress",
+          status:
+            currentState.progress[restoredSession.levelId].status === "completed"
+              ? "completed"
+              : "in_progress",
         },
-      },
+      }),
     }));
   },
 };

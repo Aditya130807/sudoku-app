@@ -1,14 +1,19 @@
-import { useEffect } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import { useEffect } from "react";
 
+import { CoinProvider } from "./src/context/CoinContext";
+import { DailyChallengeProvider } from "./src/context/DailyChallengeContext";
+import { ThemeProvider } from "./src/context/ThemeContext";
 import { auth } from "./src/firebase";
 import AppNavigator from "./src/navigation/AppNavigator";
+import { initializeAds } from "./src/services/adService";
 import { gameService } from "./src/services/gameService";
 import { userStore } from "./src/store/userStore";
 
 export default function App() {
   useEffect(() => {
     void gameService.hydrateSavedGame();
+    void initializeAds();
   }, []);
 
   useEffect(() => {
@@ -29,5 +34,13 @@ export default function App() {
     };
   }, []);
 
-  return <AppNavigator />;
+  return (
+    <CoinProvider>
+      <DailyChallengeProvider>
+        <ThemeProvider>
+          <AppNavigator />
+        </ThemeProvider>
+      </DailyChallengeProvider>
+    </CoinProvider>
+  );
 }

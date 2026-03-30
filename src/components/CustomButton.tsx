@@ -95,7 +95,11 @@ export default function CustomButton({
     >
       <View style={styles.content}>
         {icon ? <View style={styles.icon}>{icon}</View> : null}
-        <Text style={[styles.label, variantStyles[variant].label, labelStyle]}>
+        <Text
+          adjustsFontSizeToFit
+          numberOfLines={1}
+          style={[styles.label, variantStyles[variant].label, labelStyle]}
+        >
           {label}
         </Text>
       </View>

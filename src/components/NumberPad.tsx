@@ -2,6 +2,8 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "../constants/colors";
+import type { ThemeColors } from "../constants/themes";
+import { hexToRgba } from "../utils/colorUtils";
 
 interface NumberPadProps {
   symbols: number[];
@@ -9,6 +11,7 @@ interface NumberPadProps {
   selectedValue: number | null;
   onPressValue: (value: number) => void;
   disabled?: boolean;
+  themeColors?: ThemeColors;
 }
 
 export default function NumberPad({
@@ -17,11 +20,18 @@ export default function NumberPad({
   selectedValue,
   onPressValue,
   disabled = false,
+  themeColors,
 }: NumberPadProps) {
+  const backgroundColor = themeColors?.grid ?? COLORS.surface;
+  const textColor = themeColors?.text ?? COLORS.text;
+  const borderColor = hexToRgba(textColor, 0.2);
+  const mutedTextColor = hexToRgba(textColor, 0.62);
+
   return (
     <View style={styles.container}>
       {symbols.map((value) => {
         const exhausted = (remainingCounts[value] ?? 0) === 0;
+        const isSelected = selectedValue === value;
 
         return (
           <Pressable
@@ -30,7 +40,14 @@ export default function NumberPad({
             onPress={() => onPressValue(value)}
             style={({ pressed }) => [
               styles.button,
-              selectedValue === value && styles.buttonSelected,
+              {
+                backgroundColor,
+                borderColor,
+              },
+              isSelected && {
+                backgroundColor: textColor,
+                borderColor: textColor,
+              },
               exhausted && styles.buttonExhausted,
               pressed && !disabled && styles.buttonPressed,
               disabled && styles.buttonDisabled,
@@ -39,12 +56,21 @@ export default function NumberPad({
             <Text
               style={[
                 styles.value,
-                selectedValue === value && styles.valueSelected,
+                { color: isSelected ? backgroundColor : textColor },
               ]}
             >
               {value}
             </Text>
-            <Text style={styles.remaining}>{remainingCounts[value] ?? 0} left</Text>
+            <Text
+              style={[
+                styles.remaining,
+                {
+                  color: isSelected ? hexToRgba(backgroundColor, 0.74) : mutedTextColor,
+                },
+              ]}
+            >
+              {remainingCounts[value] ?? 0} left
+            </Text>
           </Pressable>
         );
       })}
@@ -62,16 +88,10 @@ const styles = StyleSheet.create({
   button: {
     width: 74,
     borderRadius: 18,
-    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: COLORS.border,
     paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
-  },
-  buttonSelected: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
   },
   buttonExhausted: {
     opacity: 0.55,
@@ -83,15 +103,10 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
   value: {
-    color: COLORS.text,
     fontSize: 22,
     fontWeight: "800",
   },
-  valueSelected: {
-    color: COLORS.surface,
-  },
   remaining: {
-    color: COLORS.textMuted,
     fontSize: 11,
     fontWeight: "600",
     marginTop: 4,

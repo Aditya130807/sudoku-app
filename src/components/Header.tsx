@@ -1,7 +1,14 @@
 import React, { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { COLORS } from "../constants/colors";
+import { useCoins } from "../context/CoinContext";
+import { RootStackParamList } from "../navigation/types";
+import type { ThemeColors } from "../constants/themes";
+import { hexToRgba } from "../utils/colorUtils";
 
 interface HeaderAction {
   icon?: ReactNode;
@@ -14,17 +21,87 @@ interface HeaderProps {
   subtitle?: string;
   leftAction?: HeaderAction;
   rightAction?: HeaderAction;
+  themeColors?: ThemeColors;
 }
 
-function ActionButton({ action }: { action?: HeaderAction }) {
-  if (!action) {
-    return <View style={styles.actionPlaceholder} />;
-  }
+const COIN_ICON_COLOR = "#FFD700";
+
+function CoinBalance({
+  themeColors,
+}: {
+  themeColors?: ThemeColors;
+}) {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { coins, isHydrated } = useCoins();
+  const backgroundColor = themeColors?.grid ?? COLORS.surface;
+  const borderColor = themeColors?.text
+    ? hexToRgba(themeColors.text, 0.2)
+    : COLORS.border;
+  const textColor = themeColors?.text ?? COLORS.text;
 
   return (
-    <Pressable onPress={action.onPress} style={styles.actionButton}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={() => navigation.navigate("Marketplace")}
+      style={[
+        styles.coinBalance,
+        {
+          backgroundColor,
+          borderColor,
+        },
+      ]}
+    >
+      <Ionicons color={COIN_ICON_COLOR} name="diamond" size={16} />
+      <Text
+        adjustsFontSizeToFit
+        numberOfLines={1}
+        style={[styles.coinBalanceText, { color: textColor }]}
+      >
+        {isHydrated ? coins : "..."}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ActionButton({
+  action,
+  themeColors,
+}: {
+  action?: HeaderAction;
+  themeColors?: ThemeColors;
+}) {
+  if (!action) {
+    return null;
+  }
+
+  const buttonBackground = themeColors?.grid ?? COLORS.surface;
+  const buttonBorder = themeColors?.text
+    ? hexToRgba(themeColors.text, 0.2)
+    : COLORS.border;
+  const labelColor = themeColors?.text ?? COLORS.text;
+
+  return (
+    <Pressable
+      onPress={action.onPress}
+      style={[
+        styles.actionButton,
+        {
+          backgroundColor: buttonBackground,
+          borderColor: buttonBorder,
+        },
+      ]}
+    >
       {action.icon}
-      {action.label ? <Text style={styles.actionLabel}>{action.label}</Text> : null}
+      {action.label ? (
+        <Text
+          adjustsFontSizeToFit
+          numberOfLines={1}
+          style={[styles.actionLabel, { color: labelColor }]}
+        >
+          {action.label}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -34,15 +111,42 @@ export default function Header({
   subtitle,
   leftAction,
   rightAction,
+  themeColors,
 }: HeaderProps) {
+  const titleColor = themeColors?.text ?? COLORS.text;
+  const subtitleColor = themeColors?.text
+    ? hexToRgba(themeColors.text, 0.65)
+    : COLORS.textMuted;
+
   return (
     <View style={styles.container}>
-      <ActionButton action={leftAction} />
-      <View style={styles.titleWrap}>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      <View style={styles.leftGroup}>
+        <ActionButton action={leftAction} themeColors={themeColors} />
+        <View style={styles.titleWrap}>
+          <Text
+            adjustsFontSizeToFit
+            numberOfLines={1}
+            style={[styles.title, { color: titleColor }]}
+          >
+            {title}
+          </Text>
+          {subtitle ? (
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={[styles.subtitle, { color: subtitleColor }]}
+            >
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
       </View>
-      <ActionButton action={rightAction} />
+      <View style={styles.rightGroup}>
+        <CoinBalance themeColors={themeColors} />
+        {rightAction ? (
+          <ActionButton action={rightAction} themeColors={themeColors} />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -53,42 +157,65 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 16,
+    gap: 12,
+  },
+  leftGroup: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   titleWrap: {
     flex: 1,
+    minWidth: 0,
+    alignItems: "flex-start",
+  },
+  rightGroup: {
+    flexShrink: 0,
+    flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
+    gap: 8,
   },
   title: {
-    color: COLORS.text,
     fontSize: 22,
     fontWeight: "800",
+    flexShrink: 1,
   },
   subtitle: {
-    color: COLORS.textMuted,
     fontSize: 13,
     marginTop: 4,
+    flexShrink: 1,
   },
   actionButton: {
-    minWidth: 48,
-    minHeight: 48,
-    borderRadius: 14,
+    minWidth: 40,
+    minHeight: 40,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
     flexDirection: "row",
   },
-  actionPlaceholder: {
-    width: 48,
-    height: 48,
+  coinBalance: {
+    minHeight: 40,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  coinBalanceText: {
+    fontSize: 13,
+    fontWeight: "800",
+    flexShrink: 1,
   },
   actionLabel: {
-    color: COLORS.text,
     fontSize: 13,
     fontWeight: "700",
     marginLeft: 6,
+    flexShrink: 1,
   },
 });
