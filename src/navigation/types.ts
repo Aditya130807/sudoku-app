@@ -8,5 +8,8 @@ export type RootStackParamList = {
   AuthChoice: undefined;
   Game: { levelId: number };
   Settings: undefined;
+  ThemeStore: undefined;
+  Marketplace: undefined;
+  DailyChallenges: undefined;
   Tutorial: { fromGame?: boolean } | undefined;
 };

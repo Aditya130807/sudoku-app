@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "sudokuapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -18,8 +17,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.pandey_sachin11.sudokuapp"
     },
     "web": {
       "output": "static",
@@ -38,8 +37,25 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "./plugins/with-admob-app-ids.js",
+        {
+          "androidAppId": "ca-app-pub-8048301971162422~8360590993",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
+        }
+      ]
     ],
+    "extra": {
+      "admob": {
+        "androidBannerUnitId": "ca-app-pub-8048301971162422/3047292788",
+        "iosBannerUnitId": "",
+        "androidInterstitialUnitId": "ca-app-pub-8048301971162422/4817765958",
+        "iosInterstitialUnitId": "",
+        "androidRewardedUnitId": "ca-app-pub-8048301971162422/8654842680",
+        "iosRewardedUnitId": ""
+      }
+    },
     "experiments": {
       "reactCompiler": true
     }

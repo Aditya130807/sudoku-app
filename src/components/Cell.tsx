@@ -1,54 +1,66 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, ViewStyle } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "../constants/colors";
+import type { ThemeColors } from "../constants/themes";
+import { hexToRgba } from "../utils/colorUtils";
 
 interface CellProps {
   value: number | null;
   notes: number[];
   size: number;
+  left: number;
+  top: number;
   isPrefilled: boolean;
   isSelected: boolean;
   isRelated: boolean;
   isMatching: boolean;
   isIncorrect: boolean;
   isCompleted: boolean;
-  borderStyle: ViewStyle;
   onPress: () => void;
+  themeColors?: ThemeColors;
 }
 
 export default function Cell({
   value,
   notes,
   size,
+  left,
+  top,
   isPrefilled,
   isSelected,
   isRelated,
   isMatching,
   isIncorrect,
   isCompleted,
-  borderStyle,
   onPress,
+  themeColors,
 }: CellProps) {
+  const textColor = themeColors?.text ?? COLORS.text;
+
   const backgroundColor = isIncorrect
-    ? COLORS.dangerSoft
+    ? hexToRgba(COLORS.danger, 0.22)
     : isSelected
-      ? COLORS.primarySoft
-      : isCompleted
-        ? COLORS.accentSoft
+      ? "rgba(255, 200, 100, 0.3)"
+      : isRelated
+        ? "rgba(255, 200, 100, 0.12)"
         : isMatching
-          ? COLORS.backgroundMuted
-          : isRelated
-            ? COLORS.surfaceAlt
-            : COLORS.surface;
+          ? hexToRgba(textColor, 0.1)
+          : isCompleted
+            ? hexToRgba(textColor, 0.08)
+            : "transparent";
+
+  const valueTextColor = !isIncorrect ? textColor : undefined;
+  const notesTextColor = hexToRgba(textColor, 0.72);
 
   return (
     <Pressable
       onPress={onPress}
       style={[
         styles.cell,
-        borderStyle,
         {
+          left,
+          top,
           width: size,
           height: size,
           backgroundColor,
@@ -56,34 +68,43 @@ export default function Cell({
       ]}
     >
       {value !== null ? (
-        <Text
-          style={[
-            styles.value,
-            isPrefilled && styles.prefilledValue,
-            isSelected && styles.selectedValue,
-            isIncorrect && styles.incorrectValue,
-          ]}
-        >
-          {value}
-        </Text>
+        <View style={styles.contentWrap}>
+          <Text
+            style={[
+              styles.value,
+              isPrefilled && styles.prefilledValue,
+              isSelected && styles.selectedValue,
+              isIncorrect && styles.incorrectValue,
+              valueTextColor ? { color: valueTextColor } : undefined,
+            ]}
+          >
+            {value}
+          </Text>
+        </View>
       ) : (
-        <Text
-          style={[
-            styles.notes,
-            notes.length === 0 && styles.emptyValue,
-            isSelected && styles.selectedNotes,
-          ]}
-        >
-          {[
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9],
-          ]
-            .map((row) =>
-              row.map((digit) => (notes.includes(digit) ? `${digit}` : " ")).join(" ")
-            )
-            .join("\n")}
-        </Text>
+        <View style={styles.contentWrap}>
+          <Text
+            style={[
+              styles.notes,
+              notes.length === 0 && styles.emptyValue,
+              isSelected && styles.selectedNotes,
+              notesTextColor ? { color: notesTextColor } : undefined,
+              isSelected ? { color: textColor } : undefined,
+            ]}
+          >
+            {[
+              [1, 2, 3],
+              [4, 5, 6],
+              [7, 8, 9],
+            ]
+              .map((row) =>
+                row
+                  .map((digit) => (notes.includes(digit) ? `${digit}` : " "))
+                  .join(" "),
+              )
+              .join("\n")}
+          </Text>
+        </View>
       )}
     </Pressable>
   );
@@ -91,14 +112,23 @@ export default function Cell({
 
 const styles = StyleSheet.create({
   cell: {
+    position: "absolute",
     alignItems: "center",
     justifyContent: "center",
-    borderColor: COLORS.border,
+    margin: 0,
+    padding: 0,
+  },
+  contentWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
   },
   value: {
     color: COLORS.primary,
-    fontSize: 18,
-    fontWeight: "700",
+    fontSize: 20,
+    fontWeight: "800",
+    textAlign: "center",
+    includeFontPadding: false,
   },
   notes: {
     color: COLORS.textMuted,
@@ -106,14 +136,14 @@ const styles = StyleSheet.create({
     lineHeight: 11,
     textAlign: "center",
     letterSpacing: 0.2,
-    paddingHorizontal: 2,
+    includeFontPadding: false,
   },
   selectedNotes: {
     color: COLORS.primaryDark,
   },
   prefilledValue: {
     color: COLORS.text,
-    fontWeight: "800",
+    fontWeight: "900",
   },
   selectedValue: {
     color: COLORS.primaryDark,

@@ -18,6 +18,7 @@ export const COLORS = {
   borderStrong: "#A4B7D4",
   overlay: "#0C1C34",
   shadow: "#B8C7E0",
+  woodbackground:"E0A965"
 };
 
 export const DIFFICULTY_COLORS = {

@@ -5,6 +5,23 @@ import { cloneBoard, cloneCellStateBoard } from "../game/validator";
 
 const ACTIVE_GAME_STORAGE_KEY = "@sudoku_ryve/active_game";
 
+export const STORAGE_KEYS = {
+  USER_COINS: "USER_COINS",
+  CLAIMED_CHALLENGES: "CLAIMED_CHALLENGES",
+  LAST_CLAIM_DATE: "LAST_CLAIM_DATE",
+} as const;
+
+interface StoredClaimedChallengesPayload {
+  ids: string[];
+  streakCount: number;
+}
+
+export interface StoredDailyEconomyState {
+  claimedChallengeIds: string[];
+  lastClaimDate: string | null;
+  streakCount: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -148,6 +165,66 @@ function cloneSession(session: GameSession): GameSession {
   };
 }
 
+function parseStoredCoins(rawValue: string | null): number {
+  if (!rawValue) {
+    return 0;
+  }
+
+  const parsedCoins = Number(rawValue);
+
+  if (!Number.isFinite(parsedCoins) || parsedCoins < 0) {
+    return 0;
+  }
+
+  return Math.floor(parsedCoins);
+}
+
+function parseStoredClaimedChallenges(
+  rawValue: string | null
+): StoredClaimedChallengesPayload {
+  if (!rawValue) {
+    return {
+      ids: [],
+      streakCount: 0,
+    };
+  }
+
+  try {
+    const parsedValue: unknown = JSON.parse(rawValue);
+
+    if (
+      typeof parsedValue !== "object" ||
+      parsedValue === null ||
+      Array.isArray(parsedValue)
+    ) {
+      return {
+        ids: [],
+        streakCount: 0,
+      };
+    }
+
+    const ids = Array.isArray(parsedValue.ids)
+      ? parsedValue.ids.filter((value): value is string => typeof value === "string")
+      : [];
+    const streakCount =
+      typeof parsedValue.streakCount === "number" &&
+      Number.isFinite(parsedValue.streakCount) &&
+      parsedValue.streakCount >= 0
+        ? Math.floor(parsedValue.streakCount)
+        : 0;
+
+    return {
+      ids,
+      streakCount,
+    };
+  } catch {
+    return {
+      ids: [],
+      streakCount: 0,
+    };
+  }
+}
+
 export const storageService = {
   async saveGame(session: GameSession): Promise<void> {
     try {
@@ -187,5 +264,77 @@ export const storageService = {
     } catch {
       // Ignore storage cleanup failures to keep the app stable.
     }
+  },
+
+  async loadCoins(): Promise<number> {
+    try {
+      const rawCoins = await AsyncStorage.getItem(STORAGE_KEYS.USER_COINS);
+      return parseStoredCoins(rawCoins);
+    } catch {
+      return 0;
+    }
+  },
+
+  async saveCoins(coins: number): Promise<void> {
+    const safeCoins =
+      Number.isFinite(coins) && coins > 0 ? Math.floor(coins) : 0;
+
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_COINS, safeCoins.toString());
+  },
+
+  async loadDailyEconomyState(): Promise<StoredDailyEconomyState> {
+    try {
+      const [rawClaimedChallenges, rawLastClaimDate] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.CLAIMED_CHALLENGES),
+        AsyncStorage.getItem(STORAGE_KEYS.LAST_CLAIM_DATE),
+      ]);
+      const parsedClaimedChallenges =
+        parseStoredClaimedChallenges(rawClaimedChallenges);
+
+      return {
+        claimedChallengeIds: parsedClaimedChallenges.ids,
+        lastClaimDate:
+          typeof rawLastClaimDate === "string" && rawLastClaimDate.trim()
+            ? rawLastClaimDate.trim()
+            : null,
+        streakCount: parsedClaimedChallenges.streakCount,
+      };
+    } catch {
+      return {
+        claimedChallengeIds: [],
+        lastClaimDate: null,
+        streakCount: 0,
+      };
+    }
+  },
+
+  async saveDailyEconomyState({
+    claimedChallengeIds,
+    lastClaimDate,
+    streakCount,
+  }: StoredDailyEconomyState): Promise<void> {
+    const safeIds = claimedChallengeIds
+      .filter((challengeId): challengeId is string => typeof challengeId === "string")
+      .map((challengeId) => challengeId.trim())
+      .filter(Boolean);
+    const safeStreakCount =
+      Number.isFinite(streakCount) && streakCount > 0
+        ? Math.floor(streakCount)
+        : 0;
+    const normalizedLastClaimDate =
+      typeof lastClaimDate === "string" && lastClaimDate.trim()
+        ? lastClaimDate.trim()
+        : "";
+
+    await Promise.all([
+      AsyncStorage.setItem(
+        STORAGE_KEYS.CLAIMED_CHALLENGES,
+        JSON.stringify({
+          ids: safeIds,
+          streakCount: safeStreakCount,
+        })
+      ),
+      AsyncStorage.setItem(STORAGE_KEYS.LAST_CLAIM_DATE, normalizedLastClaimDate),
+    ]);
   },
 };

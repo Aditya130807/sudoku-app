@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "312094184536",
+    "project_id": "sudoku-ryve-d13af",
+    "storage_bucket": "sudoku-ryve-d13af.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:312094184536:android:21bb0882380d0ef562a62d",
+        "android_client_info": {
+          "package_name": "com.pandey_sachin11.sudokuapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOal2rqLAvsvBuh04ZYx3PKS7pzNqKhR8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

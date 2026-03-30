@@ -1,5 +1,9 @@
-import React, { useState } from "react";
 import { FontAwesome } from "@expo/vector-icons";
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import * as Google from "expo-auth-session/providers/google";
+import Constants from "expo-constants";
+import * as WebBrowser from "expo-web-browser";
+import React, { useState } from "react";
 import {
   Image,
   KeyboardAvoidingView,
@@ -11,18 +15,20 @@ import {
   TextInput,
   View,
 } from "react-native";
-import * as Google from "expo-auth-session/providers/google";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import CustomButton from "../components/CustomButton";
 import { COLORS } from "../constants/colors";
-import { authService } from "../services/authService";
-import {
-  getGenericAuthErrorMessage,
-  logAuthError,
-} from "../utils/authErrors";
 import { RootStackParamList } from "../navigation/types";
+import { authService } from "../services/authService";
+import { getGenericAuthErrorMessage, logAuthError } from "../utils/authErrors";
+
+const GOOGLE_ANDROID_CLIENT_ID =
+  "312094184536-7fp1gshpja07t2o97ftbuc539qqhincf.apps.googleusercontent.com";
+const GOOGLE_WEB_CLIENT_ID =
+  "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com";
+
+WebBrowser.maybeCompleteAuthSession();
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuthChoice">;
 
@@ -73,19 +79,59 @@ export default function AuthChoiceScreen({ navigation }: Props) {
     navigation.navigate("Signup");
   };
 
-  const [, , promptAsync] = Google.useAuthRequest({
-    clientId: "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com",
+  const [request, , promptAsync] = Google.useIdTokenAuthRequest({
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    scopes: ["openid", "profile", "email"],
   });
 
   const handleGoogle = async () => {
-    const result = await promptAsync();
-
-    if (result.type === "success") {
-      const { id_token } = result.params;
-
-      await authService.loginWithGoogle(id_token);
-      navigation.replace("Home");
+    if (!request) {
+      console.warn("[auth:google] Auth request not ready yet");
+      return;
     }
+
+    if (Constants.appOwnership === "expo" && Platform.OS !== "web") {
+      console.warn(
+        "[auth:google] Running in Expo Go. Use a development build for reliable native Google Sign-In.",
+      );
+    }
+
+    const result = await promptAsync();
+    console.log("[auth:google] Prompt result", result);
+
+    const params =
+      "params" in result
+        ? (result.params as Record<string, string | undefined>)
+        : undefined;
+
+    const oauthError = params?.error;
+    const oauthErrorDescription = params?.error_description;
+
+    if (oauthError || oauthErrorDescription) {
+      console.warn("[auth:google] OAuth provider error", {
+        error: oauthError,
+        errorDescription: oauthErrorDescription,
+      });
+    }
+
+    if (result.type !== "success") {
+      return;
+    }
+
+    const idToken = params?.id_token;
+    if (!idToken) {
+      console.warn("[auth:google] Missing id_token in successful response", {
+        params,
+      });
+      setFormError(
+        "Google Sign-In did not return an ID token. Please try again.",
+      );
+      return;
+    }
+
+    await authService.loginWithGoogle(idToken);
+    navigation.replace("Home");
   };
 
   return (
@@ -104,79 +150,84 @@ export default function AuthChoiceScreen({ navigation }: Props) {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <Image source={require("../assets/login.jpg")} style={styles.image} />
-
-          <Text style={styles.logo}>
-            <Text style={{ color: COLORS.primary }}>Sudoku</Text>{" "}
-            <Text style={{ color: COLORS.accent }}>Ryve</Text>
-          </Text>
-
-          <Text style={styles.title}>Welcome</Text>
-          <Text style={styles.subtitle}>Ready to solve your first puzzle?</Text>
-
-          <View style={styles.inputGroup}>
-            <TextInput
-              autoCapitalize="none"
-              keyboardType="email-address"
-              placeholder="Email"
-              style={[styles.input, emailError ? styles.inputError : null]}
-              value={email}
-              onChangeText={(value) => {
-                setEmail(value);
-                if (emailError) setEmailError("");
-                if (passwordError) setPasswordError("");
-                if (formError) setFormError("");
-              }}
+            <Image
+              source={require("../assets/login.jpg")}
+              style={styles.image}
             />
-            {emailError ? (
-              <Text style={styles.errorText}>{emailError}</Text>
-            ) : null}
 
-            <TextInput
-              placeholder="Password"
-              secureTextEntry
-              style={[styles.input, passwordError ? styles.inputError : null]}
-              value={password}
-              onChangeText={(value) => {
-                setPassword(value);
-                if (passwordError) setPasswordError("");
-                if (formError) setFormError("");
-              }}
-            />
-            {passwordError ? (
-              <Text style={styles.errorText}>{passwordError}</Text>
-            ) : null}
+            <Text style={styles.logo}>
+              <Text style={{ color: COLORS.primary }}>Sudoku</Text>{" "}
+              <Text style={{ color: COLORS.accent }}>Ryve</Text>
+            </Text>
 
-            <Pressable
-              accessibilityRole="button"
-              style={styles.forgotPasswordButton}
-              onPress={() => navigation.navigate("ForgotPassword")}
-            >
-              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-            </Pressable>
-          </View>
+            <Text style={styles.title}>Welcome</Text>
+            <Text style={styles.subtitle}>
+              Ready to solve your first puzzle?
+            </Text>
 
-          <View style={styles.buttonGroup}>
-            <CustomButton label="Login" onPress={handleLogin} />
-
-            <View style={styles.secondaryButtonWrapper}>
-              <CustomButton
-                label="Create Account"
-                variant="secondary"
-                onPress={handleCreateAccount}
+            <View style={styles.inputGroup}>
+              <TextInput
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholder="Email"
+                style={[styles.input, emailError ? styles.inputError : null]}
+                value={email}
+                onChangeText={(value) => {
+                  setEmail(value);
+                  if (emailError) setEmailError("");
+                  if (passwordError) setPasswordError("");
+                  if (formError) setFormError("");
+                }}
               />
+              {emailError ? (
+                <Text style={styles.errorText}>{emailError}</Text>
+              ) : null}
+
+              <TextInput
+                placeholder="Password"
+                secureTextEntry
+                style={[styles.input, passwordError ? styles.inputError : null]}
+                value={password}
+                onChangeText={(value) => {
+                  setPassword(value);
+                  if (passwordError) setPasswordError("");
+                  if (formError) setFormError("");
+                }}
+              />
+              {passwordError ? (
+                <Text style={styles.errorText}>{passwordError}</Text>
+              ) : null}
+
+              <Pressable
+                accessibilityRole="button"
+                style={styles.forgotPasswordButton}
+                onPress={() => navigation.navigate("ForgotPassword")}
+              >
+                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              </Pressable>
             </View>
-          </View>
 
-          {formError ? (
-            <Text style={styles.formErrorText}>{formError}</Text>
-          ) : null}
+            <View style={styles.buttonGroup}>
+              <CustomButton label="Login" onPress={handleLogin} />
 
-          <View style={styles.orDivider} accessibilityRole="text">
-            <View style={styles.orLine} />
-            <Text style={styles.orLabel}>OR</Text>
-            <View style={styles.orLine} />
-          </View>
+              <View style={styles.secondaryButtonWrapper}>
+                <CustomButton
+                  label="Create Account"
+                  variant="secondary"
+                  onPress={handleCreateAccount}
+                />
+              </View>
+            </View>
+
+            {formError ? (
+              <Text style={styles.formErrorText}>{formError}</Text>
+            ) : null}
+
+            <View style={styles.orDivider} accessibilityRole="text">
+              <View style={styles.orLine} />
+              <Text style={styles.orLabel}>OR</Text>
+              <View style={styles.orLine} />
+            </View>
 
             <CustomButton
               label="Continue with Google"

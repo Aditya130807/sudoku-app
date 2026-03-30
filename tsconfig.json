@@ -3,13 +3,9 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx"
-  ]
+  "include": ["**/*.d.ts", "**/*.ts", "**/*.tsx"]
 }
+// C:\Users\adity\OneDrive\Desktop\Suduko\sudoku-app\node_modules

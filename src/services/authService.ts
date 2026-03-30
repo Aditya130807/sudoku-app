@@ -1,17 +1,13 @@
 import {
   createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
   GoogleAuthProvider,
   signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
 } from "firebase/auth";
 
-import * as Google from "expo-auth-session/providers/google";
-import * as WebBrowser from "expo-web-browser";
 import { auth } from "../firebase";
 import { userStore } from "../store/userStore";
-
-WebBrowser.maybeCompleteAuthSession();
 
 export const authService = {
   // 🟢 Guest mode (keep this)
@@ -45,18 +41,22 @@ export const authService = {
   },
 
   // 🔵 Google login
-async loginWithGoogle(idToken: string) {
-  const credential = GoogleAuthProvider.credential(idToken);
+  async loginWithGoogle(idToken: string) {
+    if (!idToken) {
+      throw new Error("Google Sign-In failed: missing id_token");
+    }
 
-  const res = await signInWithCredential(auth, credential);
+    const credential = GoogleAuthProvider.credential(idToken);
 
-  userStore.setUser({
-    id: res.user.uid,
-    email: res.user.email,
-  });
+    const res = await signInWithCredential(auth, credential);
 
-  return res.user;
-},
+    userStore.setUser({
+      id: res.user.uid,
+      email: res.user.email,
+    });
+
+    return res.user;
+  },
   // 🔴 Logout
   async logout() {
     await signOut(auth);

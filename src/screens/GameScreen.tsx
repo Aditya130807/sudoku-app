@@ -1,7 +1,21 @@
-import React, { useEffect, useState } from "react";
-import { Modal, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ImageBackground,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
@@ -9,19 +23,25 @@ import GameControls from "../components/GameControls";
 import Header from "../components/Header";
 import NumberPad from "../components/NumberPad";
 import SudokuGrid from "../components/SudokuGrid";
-import LoadingScreen from "./LoadingScreen";
-import { COLORS } from "../constants/colors";
 import { getLevelDefinition } from "../constants/levels";
+import type { ThemeColors } from "../constants/themes";
+import { useDailyChallenges } from "../context/DailyChallengeContext";
+import { useAppTheme } from "../context/ThemeContext";
 import { getGridConfig } from "../game/difficulty";
-import { SectionCompletion } from "../game/types";
-import { RootStackParamList } from "../navigation/types";
-import { gameService } from "../services/gameService";
-import { useGameStore } from "../store/gameStore";
 import { calculateStarsAndEfficiency } from "../game/reward";
 import { getTimeGoal } from "../game/timeGoals";
+import { SectionCompletion } from "../game/types";
+import { RootStackParamList } from "../navigation/types";
+import { initializeAds, showInterstitialAd } from "../services/adService";
+import { gameService } from "../services/gameService";
+import { useGameStore } from "../store/gameStore";
+import { hexToRgba } from "../utils/colorUtils";
 import { formatDuration, useLiveElapsedSeconds } from "../utils/timer";
+import LoadingScreen from "./LoadingScreen";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Game">;
+
+const FRAME_THICKNESS = 22;
 
 const EMPTY_COMPLETION: SectionCompletion = {
   rows: [],
@@ -39,18 +59,55 @@ function getValidationNotice(incorrectCount: number) {
     : `${incorrectCount} entries still need attention.`;
 }
 
+function getSafeLevelDefinition(levelId: number) {
+  try {
+    return getLevelDefinition(levelId);
+  } catch {
+    return null;
+  }
+}
+
 export default function GameScreen({ navigation, route }: Props) {
   const { levelId } = route.params;
-  const level = getLevelDefinition(levelId);
+  const { width: windowWidth } = useWindowDimensions();
+  const boardSize = Math.min(windowWidth - 32, 360);
+  const framedBoardSize = boardSize + FRAME_THICKNESS * 2;
+  const level = getSafeLevelDefinition(levelId);
   const gridConfig = level ? getGridConfig(level.size) : null;
+  const {
+    isHydrated: isDailyChallengeHydrated,
+    registerGameStarted,
+    registerGameWon,
+  } = useDailyChallenges();
+  const { activeTheme } = useAppTheme();
+  const frameImage = activeTheme.frameImage;
   const activeGame = useGameStore((state) => state.activeGame);
   const settings = useGameStore((state) => state.settings);
+  const themeColors = activeTheme.colors;
+  const styles = useMemo(
+    () => createGameScreenStyles(themeColors),
+    [themeColors],
+  );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isNotesMode, setIsNotesMode] = useState(false);
   const [revealIncorrectValues, setRevealIncorrectValues] = useState(false);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [completionRewardCoins, setCompletionRewardCoins] = useState(0);
+  const [completionRewardMessages, setCompletionRewardMessages] = useState<
+    string[]
+  >([]);
+  const lastInterstitialCompletionKeyRef = useRef<string | null>(null);
+  const claimStartRewards = useCallback(
+    () => registerGameStarted().filter((result) => result.ok),
+    [registerGameStarted],
+  );
+  const claimWinRewards = useCallback(
+    (currentLevelId: number) =>
+      registerGameWon(currentLevelId).filter((result) => result.ok),
+    [registerGameWon],
+  );
 
   const currentSession =
     activeGame && activeGame.levelId === levelId ? activeGame : null;
@@ -66,7 +123,10 @@ export default function GameScreen({ navigation, route }: Props) {
         completedSections: EMPTY_COMPLETION,
       };
   const remainingCounts = currentSession
-    ? gameService.getRemainingSymbolCounts(currentSession.board, currentSession.solution)
+    ? gameService.getRemainingSymbolCounts(
+        currentSession.board,
+        currentSession.solution,
+      )
     : {};
   const selectedCell = currentSession?.selectedCell ?? null;
   const selectedCellLocked =
@@ -78,6 +138,15 @@ export default function GameScreen({ navigation, route }: Props) {
     currentSession.status !== "playing" ||
     !selectedCell ||
     selectedCellLocked;
+  const currentSessionStatus = currentSession?.status ?? null;
+  const sessionStartKey =
+    currentSessionStatus === "playing" && currentSession
+      ? `${currentSession.levelId}-${currentSession.startedAt}`
+      : null;
+  const sessionCompletionKey =
+    currentSessionStatus === "completed"
+      ? (currentSession?.completedAt ?? null)
+      : null;
 
   useEffect(() => {
     if (!level || !gridConfig) {
@@ -116,9 +185,15 @@ export default function GameScreen({ navigation, route }: Props) {
   }, [notice]);
 
   useEffect(() => {
+    void initializeAds();
+  }, []);
+
+  useEffect(() => {
     setRevealIncorrectValues(false);
     setShowCompletionModal(false);
     setIsNotesMode(false);
+    setCompletionRewardCoins(0);
+    setCompletionRewardMessages([]);
   }, [currentSession?.startedAt, levelId]);
 
   useEffect(() => {
@@ -134,15 +209,70 @@ export default function GameScreen({ navigation, route }: Props) {
     }
   }, [currentSession?.completedAt, currentSession?.status]);
 
-  const completionReward = currentSession && level
-    ? calculateStarsAndEfficiency({
-        elapsedSeconds: currentSession.elapsedSeconds,
-        targetTimeSeconds: getTimeGoal(level.tier),
-        // The app doesn't currently track explicit mistake history; we compute
-        // "mistakes" as incorrect entries in the final board (0 for solved boards).
-        mistakes: gameService.validateBoard(currentSession).size,
-      })
-    : null;
+  useEffect(() => {
+    if (!isDailyChallengeHydrated || !sessionStartKey) {
+      return;
+    }
+
+    const claimedRewards = claimStartRewards();
+
+    if (!claimedRewards.length) {
+      return;
+    }
+
+    setNotice(claimedRewards.map((result) => result.message).join(" "));
+  }, [claimStartRewards, isDailyChallengeHydrated, sessionStartKey]);
+
+  useEffect(() => {
+    if (!isDailyChallengeHydrated || !sessionCompletionKey) {
+      return;
+    }
+
+    const claimedRewards = claimWinRewards(levelId);
+
+    if (!claimedRewards.length) {
+      setCompletionRewardCoins(0);
+      setCompletionRewardMessages([]);
+      return;
+    }
+
+    setCompletionRewardCoins(
+      claimedRewards.reduce(
+        (rewardSum, result) => rewardSum + result.reward,
+        0,
+      ),
+    );
+    setCompletionRewardMessages(claimedRewards.map((result) => result.message));
+  }, [
+    claimWinRewards,
+    isDailyChallengeHydrated,
+    levelId,
+    sessionCompletionKey,
+  ]);
+
+  useEffect(() => {
+    if (!sessionCompletionKey) {
+      return;
+    }
+
+    if (lastInterstitialCompletionKeyRef.current === sessionCompletionKey) {
+      return;
+    }
+
+    lastInterstitialCompletionKeyRef.current = sessionCompletionKey;
+    void showInterstitialAd();
+  }, [sessionCompletionKey]);
+
+  const completionReward =
+    currentSession && level
+      ? calculateStarsAndEfficiency({
+          elapsedSeconds: currentSession.elapsedSeconds,
+          targetTimeSeconds: getTimeGoal(level.tier),
+          // The app doesn't currently track explicit mistake history; we compute
+          // "mistakes" as incorrect entries in the final board (0 for solved boards).
+          mistakes: gameService.validateBoard(currentSession).size,
+        })
+      : null;
 
   const pushNotice = (message?: string | null) => {
     if (message) {
@@ -266,6 +396,24 @@ export default function GameScreen({ navigation, route }: Props) {
     );
   }
 
+  const gridNode = (
+    <SudokuGrid
+      boardSize={boardSize}
+      size={level.size}
+      board={currentSession.board}
+      cellStates={currentSession.cellStates}
+      puzzle={currentSession.puzzle}
+      selectedCell={currentSession.selectedCell}
+      selectedValue={highlights.selectedValue}
+      incorrectCellKeys={highlights.incorrectCellKeys}
+      completedSections={highlights.completedSections}
+      onPressCell={(row, col) => gameService.selectCell(row, col)}
+      gridImage={activeTheme.gridImage}
+      gridViewport={activeTheme.gridViewport}
+      themeColors={themeColors}
+    />
+  );
+
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <ScrollView
@@ -276,12 +424,21 @@ export default function GameScreen({ navigation, route }: Props) {
         <Header
           title={`Level ${level.id}`}
           subtitle={`${level.title} | ${level.tier} | ${level.size}x${level.size}`}
+          themeColors={themeColors}
           leftAction={{
-            icon: <Ionicons color={COLORS.text} name="arrow-back" size={20} />,
+            icon: (
+              <Ionicons color={themeColors.text} name="arrow-back" size={20} />
+            ),
             onPress: () => navigation.goBack(),
           }}
           rightAction={{
-            icon: <Ionicons color={COLORS.text} name="settings-outline" size={20} />,
+            icon: (
+              <Ionicons
+                color={themeColors.text}
+                name="settings-outline"
+                size={20}
+              />
+            ),
             onPress: () => navigation.navigate("Settings"),
           }}
         />
@@ -289,11 +446,15 @@ export default function GameScreen({ navigation, route }: Props) {
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Time</Text>
-            <Text style={styles.statValue}>{formatDuration(elapsedSeconds)}</Text>
+            <Text style={styles.statValue}>
+              {formatDuration(elapsedSeconds)}
+            </Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Hints Left</Text>
-            <Text style={styles.statValue}>{currentSession.hintsRemaining}</Text>
+            <Text style={styles.statValue}>
+              {currentSession.hintsRemaining}
+            </Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Goal</Text>
@@ -310,17 +471,25 @@ export default function GameScreen({ navigation, route }: Props) {
         ) : null}
 
         <View style={styles.boardCard}>
-          <SudokuGrid
-            size={level.size}
-            board={currentSession.board}
-            cellStates={currentSession.cellStates}
-            puzzle={currentSession.puzzle}
-            selectedCell={currentSession.selectedCell}
-            selectedValue={highlights.selectedValue}
-            incorrectCellKeys={highlights.incorrectCellKeys}
-            completedSections={highlights.completedSections}
-            onPressCell={(row, col) => gameService.selectCell(row, col)}
-          />
+          {frameImage ? (
+            <View
+              style={[
+                styles.frameContainer,
+                { width: framedBoardSize, height: framedBoardSize },
+              ]}
+            >
+              <ImageBackground
+                resizeMode="stretch"
+                source={frameImage}
+                style={styles.frame}
+                imageStyle={styles.frameImage}
+              >
+                <View style={styles.innerGrid}>{gridNode}</View>
+              </ImageBackground>
+            </View>
+          ) : (
+            gridNode
+          )}
         </View>
 
         <Text style={styles.selectionText}>
@@ -348,6 +517,7 @@ export default function GameScreen({ navigation, route }: Props) {
           selectedValue={highlights.selectedValue}
           onPressValue={handleNumberPress}
           disabled={numberPadDisabled}
+          themeColors={themeColors}
         />
 
         <View style={styles.controlsWrap}>
@@ -369,14 +539,27 @@ export default function GameScreen({ navigation, route }: Props) {
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Level Complete 🎉</Text>
+            <Text style={styles.modalTitle}>Level Complete</Text>
+
+            {completionRewardCoins > 0 ? (
+              <Text style={styles.dailyRewardText}>
+                +{completionRewardCoins} Coins
+              </Text>
+            ) : null}
+
+            {completionRewardMessages.map((message) => (
+              <Text key={message} style={styles.modalBody}>
+                {message}
+              </Text>
+            ))}
 
             <Text style={styles.modalStarsText}>
-              {
-                completionReward
-                  ? Array.from({ length: completionReward.stars }, () => "⭐").join(" ")
-                  : ""
-              }
+              {completionReward
+                ? Array.from(
+                    { length: completionReward.stars },
+                    () => "\u2605",
+                  ).join(" ")
+                : ""}
             </Text>
 
             <View style={styles.modalStats}>
@@ -387,7 +570,8 @@ export default function GameScreen({ navigation, route }: Props) {
                   : formatDuration(0)}
               </Text>
               <Text style={[styles.modalStatText, styles.modalStatTextSpacing]}>
-                Efficiency: {completionReward ? completionReward.efficiency : 0}%
+                Efficiency: {completionReward ? completionReward.efficiency : 0}
+                %
               </Text>
             </View>
 
@@ -411,168 +595,203 @@ export default function GameScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    flexGrow: 1,
-    padding: 16,
-    paddingBottom: 24,
-  },
-  statusWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-  },
-  statusCard: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: COLORS.surface,
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  statusTitle: {
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  statusBody: {
-    color: COLORS.textMuted,
-    fontSize: 14,
-    lineHeight: 21,
-    textAlign: "center",
-    marginTop: 10,
-  },
-  statusButton: {
-    marginTop: 18,
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 12,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    borderRadius: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  statLabel: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  statValue: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 6,
-  },
-  noticeCard: {
-    marginBottom: 12,
-    backgroundColor: COLORS.primarySoft,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  noticeText: {
-    color: COLORS.primaryDark,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  boardCard: {
-    backgroundColor: COLORS.surfaceAlt,
-    borderRadius: 28,
-    paddingVertical: 18,
-    marginBottom: 12,
-  },
-  selectionText: {
-    color: COLORS.textMuted,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center",
-    marginBottom: 14,
-  },
-  controlsWrap: {
-    marginTop: 18,
-  },
-  notesModeWrap: {
-    marginBottom: 12,
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(12, 28, 52, 0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  modalCard: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: COLORS.surface,
-    borderRadius: 28,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  modalTitle: {
-    color: COLORS.text,
-    fontSize: 28,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  modalBody: {
-    color: COLORS.textMuted,
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: "center",
-    marginTop: 12,
-  },
-  modalActions: {
-    flexDirection: "row",
-    marginTop: 22,
-  },
-  modalActionButtonLeft: {
-    marginRight: 12,
-  },
-  modalActionButton: {
-    flex: 1,
-    minWidth: 0,
-  },
-  modalStarsText: {
-    marginTop: 14,
-    textAlign: "center",
-    fontSize: 44,
-    lineHeight: 52,
-  },
-  modalStats: {
-    marginTop: 10,
-    alignItems: "center",
-  },
-  modalStatText: {
-    color: COLORS.textMuted,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  modalStatTextSpacing: {
-    marginTop: 4,
-  },
-});
+function createGameScreenStyles(colors: ThemeColors) {
+  const border = hexToRgba(colors.text, 0.2);
+  const textMuted = hexToRgba(colors.text, 0.65);
+  const shadow = hexToRgba(colors.text, 0.25);
+
+  return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    contentContainer: {
+      flexGrow: 1,
+      padding: 16,
+      paddingBottom: 24,
+    },
+    statusWrap: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20,
+    },
+    statusCard: {
+      width: "100%",
+      maxWidth: 360,
+      backgroundColor: colors.grid,
+      borderRadius: 24,
+      padding: 24,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    statusTitle: {
+      color: colors.text,
+      fontSize: 22,
+      fontWeight: "900",
+      textAlign: "center",
+    },
+    statusBody: {
+      color: textMuted,
+      fontSize: 14,
+      lineHeight: 21,
+      textAlign: "center",
+      marginTop: 10,
+    },
+    statusButton: {
+      marginTop: 18,
+    },
+    statsRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginBottom: 12,
+    },
+    statCard: {
+      flex: 1,
+      backgroundColor: colors.grid,
+      borderRadius: 20,
+      paddingVertical: 14,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    statLabel: {
+      color: textMuted,
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    statValue: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: "900",
+      marginTop: 6,
+    },
+    noticeCard: {
+      marginBottom: 12,
+      backgroundColor: hexToRgba(colors.grid, 0.55),
+      borderRadius: 18,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+    },
+    noticeText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    boardCard: {
+      alignSelf: "center",
+      backgroundColor: "transparent",
+      marginBottom: 12,
+    },
+    frameContainer: {
+      alignSelf: "center",
+      borderRadius: 20,
+      overflow: "hidden",
+      shadowColor: shadow,
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      elevation: 6,
+    },
+    frame: {
+      width: "100%",
+      height: "100%",
+    },
+    frameImage: {
+      borderRadius: 20,
+    },
+    innerGrid: {
+      flex: 1,
+      padding: FRAME_THICKNESS,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    selectionText: {
+      color: textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: "center",
+      marginBottom: 14,
+    },
+    controlsWrap: {
+      marginTop: 18,
+    },
+    notesModeWrap: {
+      marginBottom: 12,
+    },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: hexToRgba(colors.text, 0.45),
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 24,
+    },
+    modalCard: {
+      width: "100%",
+      maxWidth: 360,
+      backgroundColor: colors.grid,
+      borderRadius: 28,
+      padding: 24,
+      borderWidth: 1,
+      borderColor: border,
+      shadowColor: shadow,
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.18,
+      shadowRadius: 24,
+      elevation: 8,
+    },
+    modalTitle: {
+      color: colors.text,
+      fontSize: 28,
+      fontWeight: "900",
+      textAlign: "center",
+    },
+    dailyRewardText: {
+      marginTop: 10,
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: "800",
+      textAlign: "center",
+    },
+    modalBody: {
+      color: textMuted,
+      fontSize: 15,
+      lineHeight: 22,
+      textAlign: "center",
+      marginTop: 12,
+    },
+    modalActions: {
+      flexDirection: "row",
+      marginTop: 22,
+    },
+    modalActionButtonLeft: {
+      marginRight: 12,
+    },
+    modalActionButton: {
+      flex: 1,
+      minWidth: 0,
+    },
+    modalStarsText: {
+      marginTop: 14,
+      textAlign: "center",
+      fontSize: 44,
+      lineHeight: 52,
+    },
+    modalStats: {
+      marginTop: 10,
+      alignItems: "center",
+    },
+    modalStatText: {
+      color: textMuted,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: "center",
+    },
+    modalStatTextSpacing: {
+      marginTop: 4,
+    },
+  });
+}
