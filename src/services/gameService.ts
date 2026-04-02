@@ -28,6 +28,11 @@ export interface GameActionResult {
   completed?: boolean;
   message?: string;
   nextLevelId?: number | null;
+  hintCell?: {
+    row: number;
+    col: number;
+  };
+  hintWasCorrection?: boolean;
 }
 
 export interface BoardHighlights {
@@ -536,6 +541,9 @@ export const gameService = {
 
     const nextBoard = cloneBoard(activeGame.board);
     const nextCellStates = cloneCellStateBoard(activeGame.cellStates);
+    const previousValue = activeGame.board[hintMove.row][hintMove.col];
+    const hintWasCorrection =
+      previousValue !== null && previousValue !== hintMove.value;
     nextBoard[hintMove.row][hintMove.col] = hintMove.value;
     nextCellStates[hintMove.row][hintMove.col] = {
       value: hintMove.value,
@@ -558,6 +566,11 @@ export const gameService = {
       return {
         ...completedResult,
         message: hintMove.reason,
+        hintCell: {
+          row: hintMove.row,
+          col: hintMove.col,
+        },
+        hintWasCorrection,
       };
     }
 
@@ -571,6 +584,11 @@ export const gameService = {
     return {
       ok: true,
       message: hintMove.reason,
+      hintCell: {
+        row: hintMove.row,
+        col: hintMove.col,
+      },
+      hintWasCorrection,
     };
   },
 

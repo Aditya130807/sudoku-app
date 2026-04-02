@@ -1,14 +1,7 @@
-import React, { useEffect, useState } from "react";
-import {
-  Alert,
-  Image,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import React, { useEffect, useState } from "react";
+import { Alert, Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
@@ -37,7 +30,7 @@ function getPriceLabel(price: number) {
 function getThemeCardState(
   themeId: ThemeId,
   activeThemeId: ThemeId,
-  unlockedThemeIds: ThemeId[]
+  unlockedThemeIds: ThemeId[],
 ): ThemeCardState {
   if (activeThemeId === themeId) {
     return "active";
@@ -143,7 +136,7 @@ export default function ThemeStoreScreen({ navigation }: Props) {
               void handlePurchase(theme);
             },
           },
-        ]
+        ],
       );
       return;
     }
@@ -154,10 +147,16 @@ export default function ThemeStoreScreen({ navigation }: Props) {
   return (
     <SafeAreaView
       edges={["top", "bottom"]}
-      style={[styles.safeArea, { backgroundColor: activeTheme.colors.background }]}
+      style={[
+        styles.safeArea,
+        { backgroundColor: activeTheme.colors.background },
+      ]}
     >
       <ScrollView
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { backgroundColor: activeTheme.colors.background },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <Header
@@ -165,7 +164,13 @@ export default function ThemeStoreScreen({ navigation }: Props) {
           subtitle={`Active theme: ${activeTheme.name}`}
           themeColors={activeTheme.colors}
           leftAction={{
-            icon: <Ionicons color={activeTheme.colors.text} name="arrow-back" size={20} />,
+            icon: (
+              <Ionicons
+                color={activeTheme.colors.text}
+                name="arrow-back"
+                size={20}
+              />
+            ),
             onPress: () => navigation.goBack(),
           }}
         />
@@ -181,7 +186,10 @@ export default function ThemeStoreScreen({ navigation }: Props) {
         >
           <View style={styles.summaryBlock}>
             <Text
-              style={[styles.summaryLabel, { color: hexToRgba(activeTheme.colors.text, 0.65) }]}
+              style={[
+                styles.summaryLabel,
+                { color: hexToRgba(activeTheme.colors.text, 0.65) },
+              ]}
             >
               Active
             </Text>
@@ -196,36 +204,49 @@ export default function ThemeStoreScreen({ navigation }: Props) {
           <View style={styles.summaryDivider} />
           <View style={styles.summaryBlock}>
             <Text
-              style={[styles.summaryLabel, { color: hexToRgba(activeTheme.colors.text, 0.65) }]}
+              style={[
+                styles.summaryLabel,
+                { color: hexToRgba(activeTheme.colors.text, 0.65) },
+              ]}
             >
               Unlocked
             </Text>
-            <Text style={[styles.summaryValue, { color: activeTheme.colors.text }]}>
+            <Text
+              style={[styles.summaryValue, { color: activeTheme.colors.text }]}
+            >
               {unlockedThemeIds.length}/{themes.length}
             </Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryBlock}>
             <Text
-              style={[styles.summaryLabel, { color: hexToRgba(activeTheme.colors.text, 0.65) }]}
+              style={[
+                styles.summaryLabel,
+                { color: hexToRgba(activeTheme.colors.text, 0.65) },
+              ]}
             >
               Coins
             </Text>
-            <Text style={[styles.summaryValue, { color: activeTheme.colors.text }]}>
+            <Text
+              style={[styles.summaryValue, { color: activeTheme.colors.text }]}
+            >
               {isCoinHydrated ? coins : 0}
             </Text>
           </View>
         </View>
 
         <Text style={styles.summaryCaption}>
-          Theme purchases now spend coins and auto-apply the new look immediately.
+          Theme purchases now spend coins and auto-apply the new look
+          immediately.
         </Text>
 
         {feedback ? (
           <View
             style={[
               styles.feedbackCard,
-              feedback.tone === "error" ? styles.feedbackError : styles.feedbackSuccess,
+              feedback.tone === "error"
+                ? styles.feedbackError
+                : styles.feedbackSuccess,
             ]}
           >
             <Text
@@ -243,7 +264,11 @@ export default function ThemeStoreScreen({ navigation }: Props) {
 
         <View style={styles.themeGrid}>
           {themes.map((theme) => {
-            const state = getThemeCardState(theme.id, activeThemeId, unlockedThemeIds);
+            const state = getThemeCardState(
+              theme.id,
+              activeThemeId,
+              unlockedThemeIds,
+            );
             const isActive = state === "active";
             const hasEnoughCoins = coins >= theme.price;
             const showInsufficientState =
@@ -291,10 +316,23 @@ export default function ThemeStoreScreen({ navigation }: Props) {
 
                   <View style={styles.swatchRow}>
                     <View
-                      style={[styles.swatch, { backgroundColor: theme.colors.background }]}
+                      style={[
+                        styles.swatch,
+                        { backgroundColor: theme.colors.background },
+                      ]}
                     />
-                    <View style={[styles.swatch, { backgroundColor: theme.colors.grid }]} />
-                    <View style={[styles.swatch, { backgroundColor: theme.colors.text }]} />
+                    <View
+                      style={[
+                        styles.swatch,
+                        { backgroundColor: theme.colors.grid },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.swatch,
+                        { backgroundColor: theme.colors.text },
+                      ]}
+                    />
                   </View>
 
                   <View style={styles.detailsSection}>
@@ -327,7 +365,9 @@ export default function ThemeStoreScreen({ navigation }: Props) {
 
                     <View style={styles.priceSection}>
                       <Text style={styles.metaLabel}>Price</Text>
-                      <Text style={styles.priceText}>{getPriceLabel(theme.price)}</Text>
+                      <Text style={styles.priceText}>
+                        {getPriceLabel(theme.price)}
+                      </Text>
                       {showInsufficientState ? (
                         <Text style={styles.insufficientText}>
                           Need {theme.price - coins} more coins
@@ -344,7 +384,11 @@ export default function ThemeStoreScreen({ navigation }: Props) {
                   onPress={() => handleThemeAction(theme)}
                   style={styles.cardButton}
                   variant={
-                    isActive ? "success" : state === "unlocked" ? "primary" : "secondary"
+                    isActive
+                      ? "success"
+                      : state === "unlocked"
+                        ? "primary"
+                        : "secondary"
                   }
                 />
               </View>
@@ -404,7 +448,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   feedbackError: {
-    backgroundColor: "#FFE7E7",
+    backgroundColor: COLORS.dangerSoft,
   },
   feedbackSuccess: {
     backgroundColor: COLORS.primarySoft,

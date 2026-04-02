@@ -1,3 +1,4 @@
+import { onAuthStateChanged } from "firebase/auth";
 import React, {
   createContext,
   useContext,
@@ -7,13 +8,18 @@ import React, {
   useState,
 } from "react";
 
-import { storageService } from "../services/storageService";
+import { auth } from "../firebase";
+import {
+  loadUserData,
+  persistCoinsForCurrentUser,
+} from "../services/userDataService";
 
 interface CoinContextValue {
   coins: number;
   isHydrated: boolean;
   addCoins: (amount: number) => void;
   spendCoins: (amount: number) => boolean;
+  resetCoins: () => void;
 }
 
 const CoinContext = createContext<CoinContextValue | undefined>(undefined);
@@ -30,24 +36,36 @@ export function CoinProvider({ children }: { children: React.ReactNode }) {
   const [coins, setCoins] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const coinsRef = useRef(0);
+  const syncCounterRef = useRef(0);
+  const skipNextPersistRef = useRef(false);
 
   useEffect(() => {
     let isDisposed = false;
 
-    void (async () => {
-      const storedCoins = await storageService.loadCoins();
+    const syncFromAuthState = async (userId: string | null) => {
+      const syncId = syncCounterRef.current + 1;
+      syncCounterRef.current = syncId;
+      const loadResult = await loadUserData(userId);
 
-      if (isDisposed) {
+      if (syncCounterRef.current !== syncId || isDisposed) {
         return;
       }
 
-      coinsRef.current = storedCoins;
-      setCoins(storedCoins);
+      skipNextPersistRef.current = true;
+      coinsRef.current = loadResult.data.coins;
+      setCoins(loadResult.data.coins);
       setIsHydrated(true);
-    })();
+    };
+
+    void syncFromAuthState(auth.currentUser?.uid ?? null);
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      void syncFromAuthState(user?.uid ?? null);
+    });
 
     return () => {
       isDisposed = true;
+      unsubscribe();
     };
   }, []);
 
@@ -56,7 +74,14 @@ export function CoinProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    void storageService.saveCoins(coins);
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+
+    void persistCoinsForCurrentUser(coins).catch(() => {
+      // Keep wallet interactions working even when persistence fails.
+    });
   }, [coins, isHydrated]);
 
   const addCoins = (amount: number) => {
@@ -85,14 +110,21 @@ export function CoinProvider({ children }: { children: React.ReactNode }) {
     return true;
   };
 
+  const resetCoins = () => {
+    coinsRef.current = 0;
+    setCoins(0);
+    setIsHydrated(true);
+  };
+
   const value = useMemo(
     () => ({
       coins,
       isHydrated,
       addCoins,
       spendCoins,
+      resetCoins,
     }),
-    [coins, isHydrated]
+    [coins, isHydrated],
   );
 
   return <CoinContext.Provider value={value}>{children}</CoinContext.Provider>;

@@ -1,3 +1,5 @@
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { sendPasswordResetEmail } from "firebase/auth";
 import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,12 +12,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { sendPasswordResetEmail } from "firebase/auth";
 
 import CustomButton from "../components/CustomButton";
 import { COLORS } from "../constants/colors";
+import { DEFAULT_THEME_ID, getThemeConfig } from "../constants/themes";
 import { auth } from "../firebase";
 import { RootStackParamList } from "../navigation/types";
 import {
@@ -28,6 +29,7 @@ import {
 type ForgotPasswordScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList>;
 };
+const fixedAuthTheme = getThemeConfig(DEFAULT_THEME_ID).colors;
 
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
 
@@ -92,7 +94,7 @@ export default function ForgotPasswordScreen({
       await sendPasswordResetEmail(auth, email.trim());
       setSuccessMessage(FORGOT_PASSWORD_REQUEST_MESSAGE);
       setEmailError("");
-    } catch (error: any) {
+    } catch (error: unknown) {
       logAuthError("forgot-password", error);
 
       if (getAuthErrorCode(error) === "auth/user-not-found") {
@@ -117,7 +119,13 @@ export default function ForgotPasswordScreen({
   };
 
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={[
+        styles.safeArea,
+        { backgroundColor: fixedAuthTheme.background },
+      ]}
+    >
       <View style={styles.backgroundOrbTop} />
       <View style={styles.backgroundOrbBottom} />
 
@@ -126,7 +134,10 @@ export default function ForgotPasswordScreen({
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { backgroundColor: fixedAuthTheme.background },
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -147,8 +158,8 @@ export default function ForgotPasswordScreen({
             <View style={styles.card}>
               <Text style={styles.heading}>Forgot Password</Text>
               <Text style={styles.subheading}>
-                Enter the email linked to your account and we will send you a reset
-                link.
+                Enter the email linked to your account and we will send you a
+                reset link.
               </Text>
 
               <View style={styles.fieldGroup}>
@@ -174,7 +185,9 @@ export default function ForgotPasswordScreen({
                   />
                 </View>
 
-                {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
+                {emailError ? (
+                  <Text style={styles.errorText}>{emailError}</Text>
+                ) : null}
                 {successMessage ? (
                   <Text style={styles.successText}>{successMessage}</Text>
                 ) : null}
@@ -184,7 +197,9 @@ export default function ForgotPasswordScreen({
                 disabled={!isEmailValid || loading || isSuccess}
                 fullWidth
                 icon={
-                  loading ? <ActivityIndicator color={COLORS.surface} size="small" /> : null
+                  loading ? (
+                    <ActivityIndicator color={COLORS.surface} size="small" />
+                  ) : null
                 }
                 label={loading ? "Sending..." : "Send Reset Link"}
                 onPress={handleSendResetLink}
@@ -210,7 +225,6 @@ export default function ForgotPasswordScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   keyboardAvoidingView: {
     flex: 1,

@@ -10,6 +10,7 @@ import {
 } from "../constants/themes";
 import { gameStore } from "../store/gameStore";
 import {
+  clearStoredThemeState,
   loadStoredThemeState,
   persistActiveThemeId,
   persistUnlockedThemeIds,
@@ -30,6 +31,7 @@ interface AppThemeContextValue {
   isThemeUnlocked: (themeId: string) => boolean;
   buyTheme: (themeId: ThemeId) => Promise<ThemeActionResult>;
   applyTheme: (themeId: ThemeId) => Promise<ThemeActionResult>;
+  resetThemeState: () => Promise<void>;
 }
 
 const ThemeContext = createContext<AppThemeContextValue | undefined>(undefined);
@@ -176,6 +178,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return unlockedThemeIds.includes(getThemeConfig(themeId).id);
   }
 
+  async function resetThemeState() {
+    await clearStoredThemeState();
+    setUnlockedThemeIds([DEFAULT_THEME_ID]);
+    setActiveThemeId(DEFAULT_THEME_ID);
+  }
+
   const activeTheme = getThemeConfig(activeThemeId);
 
   return (
@@ -189,6 +197,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         isThemeUnlocked,
         buyTheme,
         applyTheme,
+        resetThemeState,
       }}
     >
       {children}

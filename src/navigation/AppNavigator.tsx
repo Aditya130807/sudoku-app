@@ -1,23 +1,25 @@
-import React from "react";
 import { DefaultTheme, NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
+import React, { useEffect, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { COLORS } from "../constants/colors";
 import { useAppTheme } from "../context/ThemeContext";
+import AuthChoiceScreen from "../screens/AuthChoiceScreen";
 import DailyChallengeScreen from "../screens/DailyChallengeScreen";
+import ForgotPasswordScreen from "../screens/ForgotPasswordScreen";
 import GameScreen from "../screens/GameScreen";
 import HomeScreen from "../screens/HomeScreen";
 import LevelMapScreen from "../screens/LevelMapScreen";
+import LoadingScreen from "../screens/LoadingScreen";
 import LoginScreen from "../screens/LoginScreen";
-import MarketplaceScreen from "../screens/MarketplaceScreen";
-import AuthChoiceScreen from "../screens/AuthChoiceScreen";
-import SignupScreen from "../screens/SignupScreen";
-import ForgotPasswordScreen from "../screens/ForgotPasswordScreen";
 import SettingsScreen from "../screens/SettingsScreen";
+import SignupScreen from "../screens/SignupScreen";
 import ThemeStoreScreen from "../screens/ThemeStoreScreen";
 import TutorialScreen from "../screens/TutorialScreen";
+import { storageService } from "../services/storageService";
+import { useUserStore } from "../store/userStore";
 import { RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -46,6 +48,38 @@ function getStatusBarStyle(backgroundColor: string): "dark" | "light" {
 
 export default function AppNavigator() {
   const { activeTheme } = useAppTheme();
+  const isSignedIn = useUserStore((state) => state.mode === "signed_in");
+  const [hasEnteredApp, setHasEnteredApp] = useState(false);
+  const [isEntryStateHydrated, setIsEntryStateHydrated] = useState(false);
+
+  useEffect(() => {
+    let isDisposed = false;
+
+    void (async () => {
+      const hasEntered = await storageService.hasEnteredApp();
+
+      if (isDisposed) {
+        return;
+      }
+
+      setHasEnteredApp(hasEntered);
+      setIsEntryStateHydrated(true);
+    })();
+
+    return () => {
+      isDisposed = true;
+    };
+  }, []);
+
+  if (!isEntryStateHydrated) {
+    return (
+      <SafeAreaProvider>
+        <LoadingScreen />
+      </SafeAreaProvider>
+    );
+  }
+
+  const shouldStartAtHome = isSignedIn || hasEnteredApp;
   const navigationTheme = {
     ...DefaultTheme,
     colors: {
@@ -58,26 +92,44 @@ export default function AppNavigator() {
       notification: COLORS.accent,
     },
   };
+  const stackScreenOptions = {
+    headerShown: false,
+    contentStyle: {
+      backgroundColor: activeTheme.colors.background,
+    },
+  };
 
   return (
     <SafeAreaProvider>
       <NavigationContainer theme={navigationTheme}>
         <StatusBar style={getStatusBarStyle(activeTheme.colors.background)} />
         <Stack.Navigator
-          initialRouteName="Welcome"
-          screenOptions={{ headerShown: false }}
+          key={`${isSignedIn ? "signed-in" : "signed-out"}-${
+            hasEnteredApp ? "entered" : "new"
+          }`}
+          initialRouteName={shouldStartAtHome ? "Home" : "Welcome"}
+          screenOptions={stackScreenOptions}
         >
-          <Stack.Screen name="Welcome" component={LoginScreen} />
-          <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
-          <Stack.Screen name="Signup" component={SignupScreen} />
-          <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+          {!isSignedIn ? (
+            <>
+              <Stack.Screen name="Welcome" component={LoginScreen} />
+              <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
+              <Stack.Screen name="Signup" component={SignupScreen} />
+              <Stack.Screen
+                name="ForgotPassword"
+                component={ForgotPasswordScreen}
+              />
+            </>
+          ) : null}
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="LevelMap" component={LevelMapScreen} />
           <Stack.Screen name="Game" component={GameScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="ThemeStore" component={ThemeStoreScreen} />
-          <Stack.Screen name="Marketplace" component={MarketplaceScreen} />
-          <Stack.Screen name="DailyChallenges" component={DailyChallengeScreen} />
+          <Stack.Screen
+            name="DailyChallenges"
+            component={DailyChallengeScreen}
+          />
           <Stack.Screen name="Tutorial" component={TutorialScreen} />
         </Stack.Navigator>
       </NavigationContainer>

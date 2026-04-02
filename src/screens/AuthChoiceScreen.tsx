@@ -1,8 +1,6 @@
 import { FontAwesome } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import * as Google from "expo-auth-session/providers/google";
-import Constants from "expo-constants";
-import * as WebBrowser from "expo-web-browser";
+import * as Haptics from "expo-haptics";
 import React, { useState } from "react";
 import {
   Image,
@@ -19,16 +17,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
 import { COLORS } from "../constants/colors";
+import { DEFAULT_THEME_ID, getThemeConfig } from "../constants/themes";
 import { RootStackParamList } from "../navigation/types";
 import { authService } from "../services/authService";
-import { getGenericAuthErrorMessage, logAuthError } from "../utils/authErrors";
-
-const GOOGLE_ANDROID_CLIENT_ID =
-  "312094184536-7fp1gshpja07t2o97ftbuc539qqhincf.apps.googleusercontent.com";
-const GOOGLE_WEB_CLIENT_ID =
-  "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com";
-
-WebBrowser.maybeCompleteAuthSession();
+import { getAuthErrorMessage, logAuthError } from "../utils/authErrors";
+import { onButtonPress } from "../utils/feedback";
+import { playSuccessSound } from "../utils/sound";
+const fixedAuthTheme = getThemeConfig(DEFAULT_THEME_ID).colors;
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuthChoice">;
 
@@ -38,6 +33,10 @@ export default function AuthChoiceScreen({ navigation }: Props) {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [formError, setFormError] = useState("");
+  const [isEmailFocused, setIsEmailFocused] = useState(false);
+  const [isPasswordFocused, setIsPasswordFocused] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isLoginLoading, setIsLoginLoading] = useState(false);
 
   const validateCredentials = () => {
     const trimmedEmail = email.trim();
@@ -61,16 +60,32 @@ export default function AuthChoiceScreen({ navigation }: Props) {
   };
 
   const handleLogin = async () => {
+    if (isLoginLoading) {
+      return;
+    }
+
     if (!validateCredentials()) {
       return;
     }
 
+    setIsLoginLoading(true);
+
     try {
       await authService.login(email.trim(), password);
-      navigation.replace("Home");
-    } catch (error: any) {
+      await Promise.allSettled([
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+        playSuccessSound(),
+      ]);
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "Home" }],
+      });
+    } catch (error: unknown) {
+      const errorCode = (error as { code?: string }).code;
       logAuthError("login", error);
-      setFormError(getGenericAuthErrorMessage("login"));
+      setFormError(getAuthErrorMessage(errorCode));
+    } finally {
+      setIsLoginLoading(false);
     }
   };
 
@@ -79,63 +94,11 @@ export default function AuthChoiceScreen({ navigation }: Props) {
     navigation.navigate("Signup");
   };
 
-  const [request, , promptAsync] = Google.useIdTokenAuthRequest({
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    scopes: ["openid", "profile", "email"],
-  });
-
-  const handleGoogle = async () => {
-    if (!request) {
-      console.warn("[auth:google] Auth request not ready yet");
-      return;
-    }
-
-    if (Constants.appOwnership === "expo" && Platform.OS !== "web") {
-      console.warn(
-        "[auth:google] Running in Expo Go. Use a development build for reliable native Google Sign-In.",
-      );
-    }
-
-    const result = await promptAsync();
-    console.log("[auth:google] Prompt result", result);
-
-    const params =
-      "params" in result
-        ? (result.params as Record<string, string | undefined>)
-        : undefined;
-
-    const oauthError = params?.error;
-    const oauthErrorDescription = params?.error_description;
-
-    if (oauthError || oauthErrorDescription) {
-      console.warn("[auth:google] OAuth provider error", {
-        error: oauthError,
-        errorDescription: oauthErrorDescription,
-      });
-    }
-
-    if (result.type !== "success") {
-      return;
-    }
-
-    const idToken = params?.id_token;
-    if (!idToken) {
-      console.warn("[auth:google] Missing id_token in successful response", {
-        params,
-      });
-      setFormError(
-        "Google Sign-In did not return an ID token. Please try again.",
-      );
-      return;
-    }
-
-    await authService.loginWithGoogle(idToken);
-    navigation.replace("Home");
-  };
-
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={[styles.safeArea, { backgroundColor: fixedAuthTheme.background }]}
+    >
       <View style={styles.bgCircle1} />
       <View style={styles.bgCircle2} />
 
@@ -146,7 +109,10 @@ export default function AuthChoiceScreen({ navigation }: Props) {
         <View style={styles.container}>
           <ScrollView
             style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { backgroundColor: fixedAuthTheme.background },
+            ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
@@ -160,6 +126,11 @@ export default function AuthChoiceScreen({ navigation }: Props) {
               <Text style={{ color: COLORS.accent }}>Ryve</Text>
             </Text>
 
+            <Image
+              source={require("../../assets/icon.png")}
+              style={styles.appIcon}
+            />
+
             <Text style={styles.title}>Welcome</Text>
             <Text style={styles.subtitle}>
               Ready to solve your first puzzle?
@@ -168,10 +139,18 @@ export default function AuthChoiceScreen({ navigation }: Props) {
             <View style={styles.inputGroup}>
               <TextInput
                 autoCapitalize="none"
+                placeholderTextColor="#cecece"
                 keyboardType="email-address"
                 placeholder="Email"
-                style={[styles.input, emailError ? styles.inputError : null]}
+                style={[
+                  styles.input,
+                  { backgroundColor: fixedAuthTheme.grid },
+                  emailError || formError ? styles.inputError : null,
+                  isEmailFocused ? styles.inputFocused : null,
+                ]}
                 value={email}
+                onFocus={() => setIsEmailFocused(true)}
+                onBlur={() => setIsEmailFocused(false)}
                 onChangeText={(value) => {
                   setEmail(value);
                   if (emailError) setEmailError("");
@@ -183,32 +162,69 @@ export default function AuthChoiceScreen({ navigation }: Props) {
                 <Text style={styles.errorText}>{emailError}</Text>
               ) : null}
 
-              <TextInput
-                placeholder="Password"
-                secureTextEntry
-                style={[styles.input, passwordError ? styles.inputError : null]}
-                value={password}
-                onChangeText={(value) => {
-                  setPassword(value);
-                  if (passwordError) setPasswordError("");
-                  if (formError) setFormError("");
-                }}
-              />
+              <View
+                style={[
+                  styles.passwordInputContainer,
+                  { backgroundColor: fixedAuthTheme.grid },
+                  passwordError || formError ? styles.inputError : null,
+                  isPasswordFocused ? styles.inputFocused : null,
+                ]}
+              >
+                <TextInput
+                  placeholder="Password"
+                  placeholderTextColor="#cecece"
+                  secureTextEntry={!isPasswordVisible}
+                  style={styles.passwordInput}
+                  value={password}
+                  onFocus={() => setIsPasswordFocused(true)}
+                  onBlur={() => setIsPasswordFocused(false)}
+                  onChangeText={(value) => {
+                    setPassword(value);
+                    if (passwordError) setPasswordError("");
+                    if (formError) setFormError("");
+                  }}
+                />
+
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setIsPasswordVisible((value) => !value)}
+                  style={({ pressed }) => [
+                    styles.passwordToggle,
+                    pressed ? styles.passwordTogglePressed : null,
+                  ]}
+                >
+                  <FontAwesome
+                    name={isPasswordVisible ? "eye-slash" : "eye"}
+                    size={18}
+                    color={COLORS.textMuted}
+                  />
+                </Pressable>
+              </View>
               {passwordError ? (
                 <Text style={styles.errorText}>{passwordError}</Text>
               ) : null}
-
-              <Pressable
-                accessibilityRole="button"
-                style={styles.forgotPasswordButton}
-                onPress={() => navigation.navigate("ForgotPassword")}
-              >
-                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </Pressable>
+              {formError ? (
+                <Text style={styles.formErrorText}>{formError}</Text>
+              ) : null}
             </View>
+            <Pressable
+              accessibilityRole="button"
+              style={styles.forgotPasswordButton}
+              onPress={() => {
+                void onButtonPress();
+                navigation.navigate("ForgotPassword");
+              }}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </Pressable>
 
             <View style={styles.buttonGroup}>
-              <CustomButton label="Login" onPress={handleLogin} />
+              <CustomButton
+                label="Login"
+                onPress={handleLogin}
+                disabled={isLoginLoading}
+                isLoading={isLoginLoading}
+              />
 
               <View style={styles.secondaryButtonWrapper}>
                 <CustomButton
@@ -218,42 +234,23 @@ export default function AuthChoiceScreen({ navigation }: Props) {
                 />
               </View>
             </View>
-
-            {formError ? (
-              <Text style={styles.formErrorText}>{formError}</Text>
-            ) : null}
-
-            <View style={styles.orDivider} accessibilityRole="text">
-              <View style={styles.orLine} />
-              <Text style={styles.orLabel}>OR</Text>
-              <View style={styles.orLine} />
-            </View>
-
-            <CustomButton
-              label="Continue with Google"
-              variant="secondary"
-              icon={
-                <FontAwesome name="google" size={18} color={COLORS.primary} />
-              }
-              onPress={async () => {
-                try {
-                  await handleGoogle();
-                } catch (error) {
-                  logAuthError("login", error);
-                  setFormError(getGenericAuthErrorMessage("login"));
-                }
-              }}
-            />
           </ScrollView>
 
           <View style={styles.guestContainer}>
             <Pressable
               accessibilityRole="button"
               onPress={async () => {
+                void onButtonPress();
                 await authService.continueAsGuest();
-                navigation.replace("Home");
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: "Home" }],
+                });
               }}
-              style={styles.guestButton}
+              style={({ pressed }) => [
+                styles.guestButton,
+                pressed ? styles.guestButtonPressed : null,
+              ]}
             >
               <Text style={styles.guestText}>Continue as Guest</Text>
             </Pressable>
@@ -267,7 +264,6 @@ export default function AuthChoiceScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F5F7FB",
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -275,6 +271,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
   },
   scroll: {
     flex: 1,
@@ -309,6 +310,14 @@ const styles = StyleSheet.create({
     height: 140,
     marginBottom: 10,
   },
+  appIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 20,
+    alignSelf: "center",
+    marginTop: 6,
+    marginBottom: 12,
+  },
   logo: {
     fontSize: 30,
     fontWeight: "900",
@@ -324,7 +333,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textAlign: "center",
     marginTop: 8,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   buttonGroup: {
     width: "100%",
@@ -337,12 +346,38 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   input: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: "#ddd",
+  },
+  inputFocused: {
+    borderColor: "#3B82F6",
+    borderWidth: 2,
+  },
+  passwordInputContainer: {
+    borderRadius: 12,
+    paddingLeft: 14,
+    paddingRight: 10,
+    paddingVertical: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  passwordInput: {
+    flex: 1,
+    padding: 0,
+  },
+  passwordToggle: {
+    marginLeft: 8,
+    padding: 2,
+  },
+  passwordTogglePressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.96 }],
   },
   inputError: {
     borderColor: "#D64545",
@@ -372,34 +407,19 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  orDivider: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginVertical: 10,
-  },
-  orLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: COLORS.border,
-  },
-  orLabel: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: "700",
-    marginHorizontal: 12,
-  },
-
   guestContainer: {
     paddingBottom: 16,
     paddingTop: 10,
-    backgroundColor: "#F5F7FB",
+    backgroundColor: "transparent",
   },
   guestButton: {
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 8,
+  },
+  guestButtonPressed: {
+    opacity: 0.86,
+    transform: [{ scale: 0.96 }],
   },
   guestText: {
     textAlign: "center",

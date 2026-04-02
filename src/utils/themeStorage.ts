@@ -15,6 +15,8 @@ export interface StoredThemeState {
   activeThemeId: ThemeId;
 }
 
+const THEME_STORAGE_KEYS = [UNLOCKED_THEMES_STORAGE_KEY, ACTIVE_THEME_STORAGE_KEY];
+
 function parseUnlockedThemeIds(rawValue: string | null): ThemeId[] {
   if (!rawValue) {
     return [DEFAULT_THEME_ID];
@@ -70,7 +72,7 @@ export async function loadStoredThemeState(): Promise<StoredThemeState> {
 }
 
 export async function persistUnlockedThemeIds(
-  unlockedThemeIds: ReadonlyArray<ThemeId>
+  unlockedThemeIds: readonly ThemeId[],
 ): Promise<void> {
   const sanitizedThemeIds = sanitizeThemeIds(unlockedThemeIds);
 
@@ -85,4 +87,8 @@ export async function persistActiveThemeId(activeThemeId: ThemeId): Promise<void
     ACTIVE_THEME_STORAGE_KEY,
     normalizeThemeId(activeThemeId)
   );
+}
+
+export async function clearStoredThemeState(): Promise<void> {
+  await AsyncStorage.multiRemove(THEME_STORAGE_KEYS);
 }

@@ -6,6 +6,7 @@ export interface ThemeColors {
   grid: string;
   background: string;
   text: string;
+  correctColor: string;
 }
 
 export interface ThemeConfig {
@@ -37,11 +38,12 @@ export const THEME_LIST: ThemeConfig[] = [
     price: 0,
     previewImage: require("../../assets/themes/classic.png"),
     gridImage: require("../../assets/themes/classic-grid.png"),
-    // frameImage: require("../../assets/themes/classic-grid.png"),  
+    // frameImage: require("../../assets/themes/classic-grid.png"),
     colors: {
       grid: "#FFFFFF",
       background: "#EEF5FF",
       text: "#000000",
+      correctColor: "#22C55E",
     },
   },
   {
@@ -55,6 +57,7 @@ export const THEME_LIST: ThemeConfig[] = [
       grid: "#FFE1C4",
       background: "#ffffff",
       text: "#000000",
+      correctColor: "#FB923C",
     },
   },
   {
@@ -74,6 +77,7 @@ export const THEME_LIST: ThemeConfig[] = [
       grid: "#D4FFC7",
       background: "#EEFFE8",
       text: "#133809",
+      correctColor: "#16A34A",
     },
   },
   {
@@ -93,6 +97,7 @@ export const THEME_LIST: ThemeConfig[] = [
       grid: "#F3DEC4",
       background: "#FAF0E2",
       text: "#5B3820",
+      correctColor: "#65A30D",
     },
   },
   {
@@ -112,6 +117,7 @@ export const THEME_LIST: ThemeConfig[] = [
       grid: "#D8F0FF",
       background: "#EDF9FF",
       text: "#1F4C68",
+      correctColor: "#0EA5E9",
     },
   },
 ];

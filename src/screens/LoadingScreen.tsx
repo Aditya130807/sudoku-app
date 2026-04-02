@@ -1,10 +1,18 @@
 import React from "react";
-import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../constants/colors";
+import { useAppTheme } from "../context/ThemeContext";
 
 export default function LoadingScreen() {
+  const { activeTheme } = useAppTheme();
+
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: activeTheme.colors.background },
+      ]}
+    >
       {/* App Name */}
       <Text style={styles.title}>
         <Text style={{ color: COLORS.primary }}>Sudoku</Text>{" "}
@@ -23,7 +31,6 @@ export default function LoadingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
     alignItems: "center",
     justifyContent: "center",
   },

@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
 
 import { COLORS, DIFFICULTY_COLORS } from "../constants/colors";
 import { LevelDefinition, LevelProgress } from "../game/types";
+import { onButtonPress } from "../utils/feedback";
 
 interface LevelCardProps {
   level: LevelDefinition;
@@ -34,11 +35,15 @@ export default function LevelCard({
   style,
 }: LevelCardProps) {
   const locked = progress.status === "locked";
+  const handlePress = useCallback(() => {
+    void onButtonPress();
+    onPress();
+  }, [onPress]);
 
   return (
     <Pressable
       disabled={locked}
-      onPress={onPress}
+      onPress={handlePress}
       style={({ pressed }) => [
         styles.card,
         {

@@ -1,6 +1,8 @@
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,21 +12,18 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { createUserWithEmailAndPassword } from "firebase/auth";
 
 import CustomButton from "../components/CustomButton";
 import { COLORS } from "../constants/colors";
-import { auth } from "../firebase";
+import { DEFAULT_THEME_ID, getThemeConfig } from "../constants/themes";
 import { RootStackParamList } from "../navigation/types";
-import { userStore } from "../store/userStore";
-import {
-  getGenericAuthErrorMessage,
-  logAuthError,
-} from "../utils/authErrors";
+import { authService } from "../services/authService";
+import { getAuthErrorMessage, logAuthError } from "../utils/authErrors";
+import { onButtonPress } from "../utils/feedback";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Signup">;
+const fixedAuthTheme = getThemeConfig(DEFAULT_THEME_ID).colors;
 
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
 
@@ -88,7 +87,7 @@ export default function SignupScreen({ navigation }: Props) {
     const nextPasswordError = getPasswordError(password);
     const nextConfirmPasswordError = getConfirmPasswordError(
       password,
-      confirmPassword
+      confirmPassword,
     );
 
     setEmailError(nextEmailError);
@@ -111,7 +110,7 @@ export default function SignupScreen({ navigation }: Props) {
     setPassword(value);
     setPasswordError(value ? getPasswordError(value) : "");
     setConfirmPasswordError(
-      confirmPassword ? getConfirmPasswordError(value, confirmPassword) : ""
+      confirmPassword ? getConfirmPasswordError(value, confirmPassword) : "",
     );
     if (formError) {
       setFormError("");
@@ -121,7 +120,7 @@ export default function SignupScreen({ navigation }: Props) {
   const handleConfirmPasswordChange = (value: string) => {
     setConfirmPassword(value);
     setConfirmPasswordError(
-      value ? getConfirmPasswordError(password, value) : ""
+      value ? getConfirmPasswordError(password, value) : "",
     );
     if (formError) {
       setFormError("");
@@ -136,28 +135,26 @@ export default function SignupScreen({ navigation }: Props) {
     setLoading(true);
 
     try {
-      const credentials = await createUserWithEmailAndPassword(
-        auth,
-        email.trim(),
-        password
-      );
+      await authService.signUp(email.trim(), password);
 
-      userStore.setUser({
-        id: credentials.user.uid,
-        email: credentials.user.email,
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "Home" }],
       });
-
-      navigation.replace("Home");
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorCode = (error as { code?: string }).code;
       logAuthError("signup", error);
-      setFormError(getGenericAuthErrorMessage("signup"));
+      setFormError(getAuthErrorMessage(errorCode));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={[styles.safeArea, { backgroundColor: fixedAuthTheme.background }]}
+    >
       <View style={styles.backgroundOrbTop} />
       <View style={styles.backgroundOrbBottom} />
 
@@ -166,15 +163,20 @@ export default function SignupScreen({ navigation }: Props) {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { backgroundColor: fixedAuthTheme.background },
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.screen}>
             <View style={styles.brandBlock}>
-              <View style={styles.logoBadge}>
-                <Text style={styles.logoBadgeText}>9x9</Text>
-              </View>
+              <Image
+                resizeMode="cover"
+                source={require("../../assets/icon.png")}
+                style={styles.appIcon}
+              />
               <Text style={styles.brandTitle}>
                 <Text style={styles.brandPrimary}>Sudoku</Text>{" "}
                 <Text style={styles.brandAccent}>Ryve</Text>
@@ -193,7 +195,10 @@ export default function SignupScreen({ navigation }: Props) {
               <View style={styles.form}>
                 <View style={styles.fieldGroup}>
                   <View
-                    style={[styles.inputShell, emailError ? styles.inputShellError : null]}
+                    style={[
+                      styles.inputShell,
+                      emailError || formError ? styles.inputShellError : null,
+                    ]}
                   >
                     <TextInput
                       autoCapitalize="none"
@@ -207,14 +212,18 @@ export default function SignupScreen({ navigation }: Props) {
                       onChangeText={handleEmailChange}
                     />
                   </View>
-                  {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
+                  {emailError ? (
+                    <Text style={styles.errorText}>{emailError}</Text>
+                  ) : null}
                 </View>
 
                 <View style={styles.fieldGroup}>
                   <View
                     style={[
                       styles.inputShell,
-                      passwordError ? styles.inputShellError : null,
+                      passwordError || formError
+                        ? styles.inputShellError
+                        : null,
                     ]}
                   >
                     <TextInput
@@ -232,7 +241,10 @@ export default function SignupScreen({ navigation }: Props) {
                       accessibilityRole="button"
                       hitSlop={8}
                       style={styles.visibilityButton}
-                      onPress={() => setShowPassword((current) => !current)}
+                      onPress={() => {
+                        void onButtonPress();
+                        setShowPassword((current) => !current);
+                      }}
                     >
                       <Text style={styles.visibilityText}>
                         {showPassword ? "Hide" : "Show"}
@@ -248,7 +260,9 @@ export default function SignupScreen({ navigation }: Props) {
                   <View
                     style={[
                       styles.inputShell,
-                      confirmPasswordError ? styles.inputShellError : null,
+                      confirmPasswordError || formError
+                        ? styles.inputShellError
+                        : null,
                     ]}
                   >
                     <TextInput
@@ -266,7 +280,10 @@ export default function SignupScreen({ navigation }: Props) {
                       accessibilityRole="button"
                       hitSlop={8}
                       style={styles.visibilityButton}
-                      onPress={() => setShowConfirmPassword((current) => !current)}
+                      onPress={() => {
+                        void onButtonPress();
+                        setShowConfirmPassword((current) => !current);
+                      }}
                     >
                       <Text style={styles.visibilityText}>
                         {showConfirmPassword ? "Hide" : "Show"}
@@ -278,13 +295,17 @@ export default function SignupScreen({ navigation }: Props) {
                   ) : null}
                 </View>
               </View>
-              {formError ? <Text style={styles.formErrorText}>{formError}</Text> : null}
+              {formError ? (
+                <Text style={styles.formErrorText}>{formError}</Text>
+              ) : null}
 
               <CustomButton
                 disabled={!isFormValid || loading}
                 fullWidth
                 icon={
-                  loading ? <ActivityIndicator color={COLORS.surface} size="small" /> : null
+                  loading ? (
+                    <ActivityIndicator color={COLORS.surface} size="small" />
+                  ) : null
                 }
                 label={loading ? "Creating Account..." : "Create Account"}
                 onPress={handleSignup}
@@ -295,9 +316,14 @@ export default function SignupScreen({ navigation }: Props) {
                 accessibilityRole="button"
                 disabled={loading}
                 style={styles.footerButton}
-                onPress={() => navigation.navigate("AuthChoice")}
+                onPress={() => {
+                  void onButtonPress();
+                  navigation.navigate("AuthChoice");
+                }}
               >
-                <Text style={styles.footerText}>Already have an account? Login</Text>
+                <Text style={styles.footerText}>
+                  Already have an account? Login
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -310,7 +336,6 @@ export default function SignupScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -345,24 +370,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 24,
   },
-  logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.overlay,
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 4,
-  },
-  logoBadgeText: {
-    color: COLORS.surface,
-    fontSize: 18,
-    fontWeight: "900",
-    letterSpacing: 0.8,
+  appIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 20,
+    marginBottom: 16,
   },
   brandTitle: {
     fontSize: 30,

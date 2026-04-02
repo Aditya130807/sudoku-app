@@ -2,27 +2,37 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return request.auth != null && request.auth.uid == userId;
     }
 
-    // User profile document and all nested user-owned data such as:
-    // /users/{userId}
-    // /users/{userId}/progress/{docId}
-    // /users/{userId}/scores/{docId}
+    function isValidUserData(data) {
+      return data.keys().hasOnly([
+          'coins',
+          'progress',
+          'stats',
+          'createdAt',
+          'lastLogin',
+          'migratedFromGuest',
+          'migratedGuestId',
+        ])
+        && data.keys().hasAll(['coins'])
+        && data.coins is int
+        && data.coins >= 0
+        && (!('progress' in data) || data.progress is map)
+        && (!('stats' in data) || data.stats is map)
+        && (!('createdAt' in data) || data.createdAt is timestamp)
+        && (!('lastLogin' in data) || data.lastLogin is timestamp)
+        && (!('migratedFromGuest' in data) || data.migratedFromGuest is bool)
+        && (!('migratedGuestId' in data) || data.migratedGuestId is string);
+    }
+
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
-
-      match /{document=**} {
-        allow read, write: if isOwner(userId);
-      }
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId)
+        && (request.resource == null || isValidUserData(request.resource.data));
     }
 
-    // Deny everything else by default.
     match /{document=**} {
       allow read, write: if false;
     }

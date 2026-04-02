@@ -1,14 +1,16 @@
+import { onAuthStateChanged } from "firebase/auth";
 import React, {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
 import { TOTAL_LEVELS } from "../constants/levels";
-import { useCoins } from "./CoinContext";
+import { auth } from "../firebase";
 import {
   DAILY_CHALLENGE_UNLOCK_LEVEL,
   DailyRewardChallenge,
@@ -19,6 +21,11 @@ import {
 } from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
 import { storageService } from "../services/storageService";
+import {
+  loadUserData,
+  persistDailyStatsForCurrentUser,
+} from "../services/userDataService";
+import { useCoins } from "./CoinContext";
 
 interface DailyChallengeStatus extends DailyRewardChallenge {
   claimed: boolean;
@@ -40,15 +47,16 @@ interface DailyChallengeContextValue {
   claimChallenge: (challengeId: DailyRewardChallengeId) => DailyChallengeResult;
   registerGameStarted: () => DailyChallengeResult[];
   registerGameWon: (levelId: number) => DailyChallengeResult[];
+  resetDailyChallenges: () => void;
 }
 
-const DailyChallengeContext = createContext<DailyChallengeContextValue | undefined>(
-  undefined
-);
+const DailyChallengeContext = createContext<
+  DailyChallengeContextValue | undefined
+>(undefined);
 
 function sanitizeClaimedChallengeIds(
   challengeIds: string[],
-  availableChallengeIds: DailyRewardChallengeId[]
+  availableChallengeIds: DailyRewardChallengeId[],
 ): DailyRewardChallengeId[] {
   const validIds = new Set<DailyRewardChallengeId>(availableChallengeIds);
   const sanitizedIds = new Set<DailyRewardChallengeId>();
@@ -59,7 +67,9 @@ function sanitizeClaimedChallengeIds(
     }
   });
 
-  return availableChallengeIds.filter((challengeId) => sanitizedIds.has(challengeId));
+  return availableChallengeIds.filter((challengeId) =>
+    sanitizedIds.has(challengeId),
+  );
 }
 
 export function DailyChallengeProvider({
@@ -74,18 +84,19 @@ export function DailyChallengeProvider({
   const [lastClaimDate, setLastClaimDate] = useState<string | null>(null);
   const [storedStreakCount, setStoredStreakCount] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
+  const skipNextPersistRef = useRef(false);
   const challengeCatalog = useMemo(
     () => getDailyRewardChallenges(TOTAL_LEVELS),
-    []
+    [],
   );
   const challengeIds = useMemo(
     () => challengeCatalog.map((challenge) => challenge.id),
-    [challengeCatalog]
+    [challengeCatalog],
   );
   const todayKey = getTodayKey();
   const claimedChallengeIds = useMemo(
     () => (lastClaimDate === todayKey ? storedClaimedChallengeIds : []),
-    [lastClaimDate, storedClaimedChallengeIds, todayKey]
+    [lastClaimDate, storedClaimedChallengeIds, todayKey],
   );
   const streakCount = useMemo(
     () =>
@@ -93,18 +104,24 @@ export function DailyChallengeProvider({
       (lastClaimDate === todayKey || isYesterday(lastClaimDate, todayKey))
         ? storedStreakCount
         : 0,
-    [lastClaimDate, storedStreakCount, todayKey]
+    [lastClaimDate, storedStreakCount, todayKey],
   );
 
   useEffect(() => {
     let isDisposed = false;
+    let syncVersion = 0;
 
-    void (async () => {
-      const storedState = await storageService.loadDailyEconomyState();
+    const syncFromAuthState = async (userId: string | null) => {
+      syncVersion += 1;
+      const currentSyncVersion = syncVersion;
+      const loadResult = await loadUserData(userId);
+      const storedState = loadResult.data.stats;
 
-      if (isDisposed) {
+      if (isDisposed || currentSyncVersion !== syncVersion) {
         return;
       }
+
+      skipNextPersistRef.current = true;
 
       const shouldKeepStreak =
         !!storedState.lastClaimDate &&
@@ -113,16 +130,26 @@ export function DailyChallengeProvider({
 
       setStoredClaimedChallengeIds(
         storedState.lastClaimDate === todayKey
-          ? sanitizeClaimedChallengeIds(storedState.claimedChallengeIds, challengeIds)
-          : []
+          ? sanitizeClaimedChallengeIds(
+              storedState.claimedChallengeIds,
+              challengeIds,
+            )
+          : [],
       );
       setLastClaimDate(storedState.lastClaimDate);
       setStoredStreakCount(shouldKeepStreak ? storedState.streakCount : 0);
       setIsHydrated(true);
-    })();
+    };
+
+    void syncFromAuthState(auth.currentUser?.uid ?? null);
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      void syncFromAuthState(user?.uid ?? null);
+    });
 
     return () => {
       isDisposed = true;
+      unsubscribe();
     };
   }, [challengeIds, todayKey]);
 
@@ -131,10 +158,21 @@ export function DailyChallengeProvider({
       return;
     }
 
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+
     void storageService.saveDailyEconomyState({
       claimedChallengeIds: storedClaimedChallengeIds,
       lastClaimDate,
       streakCount: storedStreakCount,
+    });
+
+    void persistDailyStatsForCurrentUser({
+      claimedChallengeIds: storedClaimedChallengeIds,
+      streakCount: storedStreakCount,
+      lastClaimDate,
     });
   }, [isHydrated, lastClaimDate, storedClaimedChallengeIds, storedStreakCount]);
 
@@ -149,13 +187,13 @@ export function DailyChallengeProvider({
         }));
       }
 
-      const uniqueChallengeIds = Array.from(new Set(challengeIdsToClaim)).filter(
-        (challengeId) => challengeCatalog.some((challenge) => challenge.id === challengeId)
+      const uniqueChallengeIds = Array.from(
+        new Set(challengeIdsToClaim),
+      ).filter((challengeId) =>
+        challengeCatalog.some((challenge) => challenge.id === challengeId),
       );
 
-      if (
-        gameService.getNextPlayableLevelId() < DAILY_CHALLENGE_UNLOCK_LEVEL
-      ) {
+      if (gameService.getNextPlayableLevelId() < DAILY_CHALLENGE_UNLOCK_LEVEL) {
         return uniqueChallengeIds.map((challengeId) => ({
           challengeId,
           ok: false,
@@ -164,14 +202,15 @@ export function DailyChallengeProvider({
         }));
       }
 
-      const todayClaimedIds = lastClaimDate === todayKey ? claimedChallengeIds : [];
+      const todayClaimedIds =
+        lastClaimDate === todayKey ? claimedChallengeIds : [];
       const nextClaimedIds = [...todayClaimedIds];
       const successfulRewards: DailyChallengeResult[] = [];
       const skippedRewards: DailyChallengeResult[] = [];
 
       uniqueChallengeIds.forEach((challengeId) => {
         const challenge = challengeCatalog.find(
-          (entry) => entry.id === challengeId
+          (entry) => entry.id === challengeId,
         );
 
         if (!challenge) {
@@ -184,7 +223,10 @@ export function DailyChallengeProvider({
           return;
         }
 
-        if (todayClaimedIds.includes(challengeId) || nextClaimedIds.includes(challengeId)) {
+        if (
+          todayClaimedIds.includes(challengeId) ||
+          nextClaimedIds.includes(challengeId)
+        ) {
           skippedRewards.push({
             challengeId,
             ok: false,
@@ -209,7 +251,7 @@ export function DailyChallengeProvider({
 
       const totalReward = successfulRewards.reduce(
         (rewardSum, challenge) => rewardSum + challenge.reward,
-        0
+        0,
       );
       const nextStreakCount =
         lastClaimDate === todayKey
@@ -233,7 +275,7 @@ export function DailyChallengeProvider({
       lastClaimDate,
       streakCount,
       todayKey,
-    ]
+    ],
   );
 
   const challenges = useMemo(
@@ -242,8 +284,15 @@ export function DailyChallengeProvider({
         ...challenge,
         claimed: claimedChallengeIds.includes(challenge.id),
       })),
-    [challengeCatalog, claimedChallengeIds]
+    [challengeCatalog, claimedChallengeIds],
   );
+
+  const resetDailyChallenges = useCallback(() => {
+    setStoredClaimedChallengeIds([]);
+    setLastClaimDate(null);
+    setStoredStreakCount(0);
+    setIsHydrated(true);
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -262,7 +311,7 @@ export function DailyChallengeProvider({
       registerGameStarted: () => claimChallenges(["play_1_game"]),
       registerGameWon: (levelId: number) => {
         const featuredChallenge = challengeCatalog.find(
-          (challenge) => challenge.id === "featured_daily_board"
+          (challenge) => challenge.id === "featured_daily_board",
         );
         const challengeIdsToClaim: DailyRewardChallengeId[] = ["win_1_game"];
 
@@ -272,6 +321,7 @@ export function DailyChallengeProvider({
 
         return claimChallenges(challengeIdsToClaim);
       },
+      resetDailyChallenges,
     }),
     [
       challengeCatalog,
@@ -280,8 +330,9 @@ export function DailyChallengeProvider({
       claimedChallengeIds,
       isHydrated,
       lastClaimDate,
+      resetDailyChallenges,
       streakCount,
-    ]
+    ],
   );
 
   return (
@@ -296,7 +347,7 @@ export function useDailyChallenges() {
 
   if (!context) {
     throw new Error(
-      "useDailyChallenges must be used within a DailyChallengeProvider."
+      "useDailyChallenges must be used within a DailyChallengeProvider.",
     );
   }
 

@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import {
+  Animated,
   ImageBackground,
   Modal,
   ScrollView,
@@ -23,7 +24,7 @@ import GameControls from "../components/GameControls";
 import Header from "../components/Header";
 import NumberPad from "../components/NumberPad";
 import SudokuGrid from "../components/SudokuGrid";
-import { getLevelDefinition } from "../constants/levels";
+import { getLevelDefinition, getNextLevelId } from "../constants/levels";
 import type { ThemeColors } from "../constants/themes";
 import { useDailyChallenges } from "../context/DailyChallengeContext";
 import { useAppTheme } from "../context/ThemeContext";
@@ -32,10 +33,15 @@ import { calculateStarsAndEfficiency } from "../game/reward";
 import { getTimeGoal } from "../game/timeGoals";
 import { SectionCompletion } from "../game/types";
 import { RootStackParamList } from "../navigation/types";
-import { initializeAds, showInterstitialAd } from "../services/adService";
+import {
+  initializeAds,
+  preloadInterstitialAd,
+  showInterstitialAd,
+} from "../services/adService";
 import { gameService } from "../services/gameService";
 import { useGameStore } from "../store/gameStore";
 import { hexToRgba } from "../utils/colorUtils";
+import { onGameWin } from "../utils/feedback";
 import { formatDuration, useLiveElapsedSeconds } from "../utils/timer";
 import LoadingScreen from "./LoadingScreen";
 
@@ -48,6 +54,36 @@ const EMPTY_COMPLETION: SectionCompletion = {
   columns: [],
   boxes: [],
 };
+
+type HintStateMap = Record<string, boolean>;
+
+function getHintStateKey(row: number, col: number) {
+  return `${row}-${col}`;
+}
+
+function parseHintStateKey(key: string) {
+  const [rowPart, colPart] = key.split("-");
+  const row = Number(rowPart);
+  const col = Number(colPart);
+
+  if (Number.isNaN(row) || Number.isNaN(col)) {
+    return null;
+  }
+
+  return { row, col };
+}
+
+function toHintStateKeyFromValidatorKey(key: string) {
+  const [rowPart, colPart] = key.split(":");
+  const row = Number(rowPart);
+  const col = Number(colPart);
+
+  if (Number.isNaN(row) || Number.isNaN(col)) {
+    return null;
+  }
+
+  return getHintStateKey(row, col);
+}
 
 function getValidationNotice(incorrectCount: number) {
   if (incorrectCount <= 0) {
@@ -93,12 +129,19 @@ export default function GameScreen({ navigation, route }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [isNotesMode, setIsNotesMode] = useState(false);
   const [revealIncorrectValues, setRevealIncorrectValues] = useState(false);
+  const [hintHighlight, setHintHighlight] = useState<HintStateMap>({});
+  const [hintErrors, setHintErrors] = useState<HintStateMap>({});
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [completionRewardCoins, setCompletionRewardCoins] = useState(0);
   const [completionRewardMessages, setCompletionRewardMessages] = useState<
     string[]
   >([]);
   const lastInterstitialCompletionKeyRef = useRef<string | null>(null);
+  const lastWinFeedbackKeyRef = useRef<string | null>(null);
+  const completionAnimation = useRef(new Animated.Value(0)).current;
+  const hintHighlightTimeoutsRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
   const claimStartRewards = useCallback(
     () => registerGameStarted().filter((result) => result.ok),
     [registerGameStarted],
@@ -185,16 +228,69 @@ export default function GameScreen({ navigation, route }: Props) {
   }, [notice]);
 
   useEffect(() => {
-    void initializeAds();
+    void (async () => {
+      await initializeAds();
+      await preloadInterstitialAd();
+    })();
   }, []);
 
   useEffect(() => {
     setRevealIncorrectValues(false);
+    setHintHighlight({});
+    setHintErrors({});
+    hintHighlightTimeoutsRef.current.forEach((timeout) => {
+      clearTimeout(timeout);
+    });
+    hintHighlightTimeoutsRef.current.clear();
     setShowCompletionModal(false);
     setIsNotesMode(false);
     setCompletionRewardCoins(0);
     setCompletionRewardMessages([]);
   }, [currentSession?.startedAt, levelId]);
+
+  useEffect(() => {
+    const highlightTimeouts = hintHighlightTimeoutsRef.current;
+
+    return () => {
+      highlightTimeouts.forEach((timeout) => {
+        clearTimeout(timeout);
+      });
+      highlightTimeouts.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentSession || Object.keys(hintErrors).length === 0) {
+      return;
+    }
+
+    setHintErrors((previous) => {
+      let hasChanged = false;
+      const next = { ...previous };
+
+      Object.keys(previous).forEach((key) => {
+        const parsedKey = parseHintStateKey(key);
+
+        if (!parsedKey) {
+          delete next[key];
+          hasChanged = true;
+          return;
+        }
+
+        const currentValue =
+          currentSession.board[parsedKey.row]?.[parsedKey.col];
+        const solutionValue =
+          currentSession.solution[parsedKey.row]?.[parsedKey.col] ?? null;
+
+        if (currentValue === null || currentValue === solutionValue) {
+          delete next[key];
+          hasChanged = true;
+        }
+      });
+
+      return hasChanged ? next : previous;
+    });
+  }, [currentSession, hintErrors]);
 
   useEffect(() => {
     if (!loading && !loadError && !currentSession) {
@@ -208,6 +304,19 @@ export default function GameScreen({ navigation, route }: Props) {
       setNotice(null);
     }
   }, [currentSession?.completedAt, currentSession?.status]);
+
+  useEffect(() => {
+    if (!sessionCompletionKey) {
+      return;
+    }
+
+    if (lastWinFeedbackKeyRef.current === sessionCompletionKey) {
+      return;
+    }
+
+    lastWinFeedbackKeyRef.current = sessionCompletionKey;
+    void onGameWin();
+  }, [sessionCompletionKey]);
 
   useEffect(() => {
     if (!isDailyChallengeHydrated || !sessionStartKey) {
@@ -260,8 +369,29 @@ export default function GameScreen({ navigation, route }: Props) {
     }
 
     lastInterstitialCompletionKeyRef.current = sessionCompletionKey;
-    void showInterstitialAd();
+    void (async () => {
+      try {
+        await showInterstitialAd();
+      } catch {
+        // Keep the completion flow stable if the interstitial is unavailable.
+      }
+    })();
   }, [sessionCompletionKey]);
+
+  useEffect(() => {
+    if (!showCompletionModal) {
+      completionAnimation.setValue(0);
+      return;
+    }
+
+    completionAnimation.setValue(0);
+    Animated.spring(completionAnimation, {
+      toValue: 1,
+      friction: 8,
+      tension: 85,
+      useNativeDriver: true,
+    }).start();
+  }, [completionAnimation, showCompletionModal]);
 
   const completionReward =
     currentSession && level
@@ -273,6 +403,14 @@ export default function GameScreen({ navigation, route }: Props) {
           mistakes: gameService.validateBoard(currentSession).size,
         })
       : null;
+  const completionScale = completionAnimation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.94, 1],
+  });
+  const completionOpacity = completionAnimation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
 
   const pushNotice = (message?: string | null) => {
     if (message) {
@@ -319,12 +457,62 @@ export default function GameScreen({ navigation, route }: Props) {
     }
 
     try {
-      const incorrectCount = gameService.validateBoard(currentSession).size;
+      const incorrectKeys = gameService.validateBoard(currentSession);
+      const incorrectCount = incorrectKeys.size;
       const result = gameService.useHint();
 
       if (!result.ok) {
         pushNotice(result.message ?? "No hint available.");
         return;
+      }
+
+      if (incorrectKeys.size > 0) {
+        setHintErrors((previous) => {
+          const next = { ...previous };
+
+          incorrectKeys.forEach((validatorKey) => {
+            const hintKey = toHintStateKeyFromValidatorKey(validatorKey);
+
+            if (hintKey) {
+              next[hintKey] = true;
+            }
+          });
+
+          return next;
+        });
+      }
+
+      if (result.hintCell) {
+        const hintKey = getHintStateKey(
+          result.hintCell.row,
+          result.hintCell.col,
+        );
+
+        setHintHighlight((previous) => ({
+          ...previous,
+          [hintKey]: true,
+        }));
+
+        const existingTimeout = hintHighlightTimeoutsRef.current.get(hintKey);
+
+        if (existingTimeout) {
+          clearTimeout(existingTimeout);
+        }
+
+        const timeout = setTimeout(() => {
+          setHintHighlight((previous) => {
+            if (!previous[hintKey]) {
+              return previous;
+            }
+
+            const next = { ...previous };
+            delete next[hintKey];
+            return next;
+          });
+          hintHighlightTimeoutsRef.current.delete(hintKey);
+        }, 2000);
+
+        hintHighlightTimeoutsRef.current.set(hintKey, timeout);
       }
 
       setRevealIncorrectValues(true);
@@ -350,25 +538,31 @@ export default function GameScreen({ navigation, route }: Props) {
     }
   };
 
-  const handleRetry = () => {
-    setShowCompletionModal(false);
-    setRevealIncorrectValues(false);
-    navigation.replace("Game", { levelId });
-  };
-
   const handleNextLevel = () => {
     setShowCompletionModal(false);
     setRevealIncorrectValues(false);
 
-    const nextLevelId = levelId + 1;
-    const nextLevel = getLevelDefinition(nextLevelId);
+    const nextLevelId = getNextLevelId(levelId);
+
+    if (!nextLevelId) {
+      navigation.navigate("LevelMap");
+      return;
+    }
+
+    const nextLevel = getSafeLevelDefinition(nextLevelId);
 
     if (!nextLevel) {
       navigation.navigate("LevelMap");
       return;
     }
 
-    navigation.replace("Game", { levelId: nextLevelId });
+    navigation.replace("Game", { levelId: nextLevel.id });
+  };
+
+  const handleGoHome = () => {
+    setShowCompletionModal(false);
+    setRevealIncorrectValues(false);
+    navigation.navigate("Home");
   };
 
   if (loading) {
@@ -401,15 +595,19 @@ export default function GameScreen({ navigation, route }: Props) {
       boardSize={boardSize}
       size={level.size}
       board={currentSession.board}
+      solution={currentSession.solution}
       cellStates={currentSession.cellStates}
       puzzle={currentSession.puzzle}
       selectedCell={currentSession.selectedCell}
       selectedValue={highlights.selectedValue}
       incorrectCellKeys={highlights.incorrectCellKeys}
       completedSections={highlights.completedSections}
+      hintHighlight={hintHighlight}
+      hintErrors={hintErrors}
       onPressCell={(row, col) => gameService.selectCell(row, col)}
       gridImage={activeTheme.gridImage}
       gridViewport={activeTheme.gridViewport}
+      themeId={activeTheme.id}
       themeColors={themeColors}
     />
   );
@@ -538,47 +736,71 @@ export default function GameScreen({ navigation, route }: Props) {
         visible={showCompletionModal}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Level Complete</Text>
-
-            {completionRewardCoins > 0 ? (
-              <Text style={styles.dailyRewardText}>
-                +{completionRewardCoins} Coins
-              </Text>
-            ) : null}
-
-            {completionRewardMessages.map((message) => (
-              <Text key={message} style={styles.modalBody}>
-                {message}
-              </Text>
-            ))}
-
-            <Text style={styles.modalStarsText}>
-              {completionReward
-                ? Array.from(
-                    { length: completionReward.stars },
-                    () => "\u2605",
-                  ).join(" ")
-                : ""}
+          <Animated.View
+            style={[
+              styles.modalCard,
+              {
+                opacity: completionOpacity,
+                transform: [{ scale: completionScale }],
+              },
+            ]}
+          >
+            <Text style={styles.modalTitle}>Level Complete {"\u{1F389}"}</Text>
+            <Text style={styles.modalSubtitle}>
+              {level.title} is cleared. Your next board is ready whenever you
+              are.
             </Text>
 
-            <View style={styles.modalStats}>
-              <Text style={styles.modalStatText}>
-                Time taken:{" "}
-                {currentSession
-                  ? formatDuration(currentSession.elapsedSeconds)
-                  : formatDuration(0)}
-              </Text>
-              <Text style={[styles.modalStatText, styles.modalStatTextSpacing]}>
-                Efficiency: {completionReward ? completionReward.efficiency : 0}
-                %
-              </Text>
+            <Text style={styles.modalStarsText}>
+              {Array.from(
+                { length: currentSession.stars },
+                () => "\u2605",
+              ).join(" ")}
+            </Text>
+
+            <View style={styles.modalStatsGrid}>
+              <View style={styles.modalStatCard}>
+                <Text style={styles.modalStatLabel}>Time</Text>
+                <Text style={styles.modalStatValue}>
+                  {formatDuration(currentSession.elapsedSeconds)}
+                </Text>
+              </View>
+              <View style={styles.modalStatCard}>
+                <Text style={styles.modalStatLabel}>Hints Used</Text>
+                <Text style={styles.modalStatValue}>
+                  {currentSession.hintsUsed}
+                </Text>
+              </View>
+              <View style={styles.modalStatCard}>
+                <Text style={styles.modalStatLabel}>Efficiency</Text>
+                <Text style={styles.modalStatValue}>
+                  {completionReward ? `${completionReward.efficiency}%` : "0%"}
+                </Text>
+              </View>
             </View>
+
+            {completionRewardCoins > 0 ? (
+              <View style={styles.modalRewardBadge}>
+                <Text style={styles.modalRewardBadgeText}>
+                  Daily reward: +{completionRewardCoins} coins
+                </Text>
+              </View>
+            ) : null}
+
+            {completionRewardMessages.length > 0 ? (
+              <View style={styles.modalRewardList}>
+                {completionRewardMessages.map((message) => (
+                  <Text key={message} style={styles.modalBody}>
+                    {message}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
 
             <View style={styles.modalActions}>
               <CustomButton
-                label="Retry"
-                onPress={handleRetry}
+                label="Home"
+                onPress={handleGoHome}
                 variant="secondary"
                 style={[styles.modalActionButton, styles.modalActionButtonLeft]}
               />
@@ -588,7 +810,7 @@ export default function GameScreen({ navigation, route }: Props) {
                 style={styles.modalActionButton}
               />
             </View>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -612,6 +834,7 @@ function createGameScreenStyles(colors: ThemeColors) {
       flexGrow: 1,
       padding: 16,
       paddingBottom: 24,
+      backgroundColor: colors.background,
     },
     statusWrap: {
       flex: 1,
@@ -733,35 +956,34 @@ function createGameScreenStyles(colors: ThemeColors) {
       width: "100%",
       maxWidth: 360,
       backgroundColor: colors.grid,
-      borderRadius: 28,
+      borderRadius: 24,
       padding: 24,
       borderWidth: 1,
       borderColor: border,
       shadowColor: shadow,
-      shadowOffset: { width: 0, height: 18 },
+      shadowOffset: { width: 0, height: 20 },
       shadowOpacity: 0.18,
-      shadowRadius: 24,
+      shadowRadius: 28,
       elevation: 8,
     },
     modalTitle: {
       color: colors.text,
-      fontSize: 28,
+      fontSize: 29,
       fontWeight: "900",
       textAlign: "center",
     },
-    dailyRewardText: {
+    modalSubtitle: {
       marginTop: 10,
-      color: colors.text,
-      fontSize: 18,
-      fontWeight: "800",
-      textAlign: "center",
-    },
-    modalBody: {
       color: textMuted,
       fontSize: 15,
       lineHeight: 22,
       textAlign: "center",
-      marginTop: 12,
+    },
+    modalBody: {
+      color: textMuted,
+      fontSize: 14,
+      lineHeight: 21,
+      textAlign: "center",
     },
     modalActions: {
       flexDirection: "row",
@@ -775,23 +997,61 @@ function createGameScreenStyles(colors: ThemeColors) {
       minWidth: 0,
     },
     modalStarsText: {
-      marginTop: 14,
+      marginTop: 16,
       textAlign: "center",
-      fontSize: 44,
-      lineHeight: 52,
+      color: "#F4B53F",
+      fontSize: 34,
+      lineHeight: 40,
     },
-    modalStats: {
-      marginTop: 10,
+    modalStatsGrid: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 18,
+    },
+    modalStatCard: {
+      flex: 1,
+      backgroundColor: hexToRgba(colors.background, 0.78),
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 10,
+      borderWidth: 1,
+      borderColor: hexToRgba(colors.text, 0.08),
       alignItems: "center",
     },
-    modalStatText: {
+    modalStatLabel: {
       color: textMuted,
-      fontSize: 14,
-      lineHeight: 20,
+      fontSize: 11,
+      fontWeight: "700",
+      textAlign: "center",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    modalStatValue: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: "900",
+      marginTop: 8,
       textAlign: "center",
     },
-    modalStatTextSpacing: {
-      marginTop: 4,
+    modalRewardBadge: {
+      alignSelf: "center",
+      marginTop: 18,
+      backgroundColor: hexToRgba(colors.text, 0.08),
+      borderRadius: 999,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: hexToRgba(colors.text, 0.14),
+    },
+    modalRewardBadgeText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "800",
+      textAlign: "center",
+    },
+    modalRewardList: {
+      marginTop: 14,
+      gap: 8,
     },
   });
 }
