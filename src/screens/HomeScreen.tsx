@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useEffect, useState } from "react";
 import {
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -21,8 +22,10 @@ import { useDailyChallenges } from "../context/DailyChallengeContext";
 import { useAppTheme } from "../context/ThemeContext";
 import { RootStackParamList } from "../navigation/types";
 import {
+  bannerAdsEnabled,
   bannerAdUnitId,
   initializeAds,
+  rewardedAdsEnabled,
   showRewardedAd,
 } from "../services/adService";
 import { DAILY_CHALLENGE_UNLOCK_LEVEL } from "../services/dailyChallengeService";
@@ -67,6 +70,7 @@ export default function HomeScreen({ navigation }: Props) {
     totalStars,
   });
   const encourageLogin = shouldEncourageLogin(user);
+  const isGuest = user.mode === "guest" || !user.uid;
   const [isRewardAdLoading, setIsRewardAdLoading] = useState(false);
   const [rewardNotice, setRewardNotice] = useState<string | null>(null);
 
@@ -102,17 +106,43 @@ export default function HomeScreen({ navigation }: Props) {
     }
   };
 
+  const handleOpenDailyChallenges = () => {
+    if (isGuest) {
+      Alert.alert(
+        "Login Required",
+        "You need to be logged in to access Daily Challenges.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Login",
+            onPress: () => navigation.navigate("AuthChoice"),
+          },
+        ],
+      );
+      return;
+    }
+
+    navigation.navigate("DailyChallenges");
+  };
+
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={[
+        styles.safeArea,
+        { backgroundColor: activeTheme.colors.background },
+      ]}
+    >
       <ScrollView
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { backgroundColor: activeTheme.colors.background },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <Header
           title="Sudoku Ryve"
-          subtitle={
-            user.mode === "signed_in" ? "Preview account mode" : "Guest journey"
-          }
+          subtitle={user.mode === "signed_in" ? "Signed in" : "Guest journey"}
           rightAction={{
             icon: (
               <Ionicons color={COLORS.text} name="settings-outline" size={20} />
@@ -129,9 +159,7 @@ export default function HomeScreen({ navigation }: Props) {
                 numberOfLines={1}
                 style={styles.heroEyebrow}
               >
-                {user.mode === "signed_in"
-                  ? "Account Preview"
-                  : "Guest Session"}
+                {user.mode === "signed_in" ? "Signed In" : "Guest Session"}
               </Text>
               <Text
                 adjustsFontSizeToFit
@@ -198,14 +226,7 @@ export default function HomeScreen({ navigation }: Props) {
           </View>
         </View>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => navigation.navigate("Marketplace")}
-          style={({ pressed }) => [
-            styles.infoCard,
-            pressed ? { opacity: 0.9 } : null,
-          ]}
-        >
+        <View style={styles.infoCard}>
           <Text style={styles.infoTitle}>Wallet</Text>
           <Text
             adjustsFontSizeToFit
@@ -214,30 +235,35 @@ export default function HomeScreen({ navigation }: Props) {
           >
             {isCoinHydrated ? `${coins} coins ready` : "Loading wallet"}
           </Text>
-          <Text style={styles.infoBody}>Open Marketplace</Text>
-        </Pressable>
-
-        <View style={styles.rewardCard}>
-          <Text style={styles.rewardTitle}>Bonus Coins</Text>
-          <Text style={styles.rewardBody}>
-            Watch one short ad and earn {BONUS_REWARDED_AD_COINS} coins.
+          <Text style={styles.infoBody}>
+            Earn coins by playing daily challenges and watching ads.
           </Text>
-          <CustomButton
-            disabled={!isCoinHydrated || isRewardAdLoading}
-            label={
-              isRewardAdLoading
-                ? "Loading ad..."
-                : `Watch Ad +${BONUS_REWARDED_AD_COINS}`
-            }
-            onPress={() => {
-              void handleWatchRewardedAd();
-            }}
-            style={styles.rewardButton}
-          />
-          {rewardNotice ? (
-            <Text style={styles.rewardNotice}>{rewardNotice}</Text>
-          ) : null}
         </View>
+
+        {rewardedAdsEnabled ? (
+          <View style={styles.rewardCard}>
+            <Text style={styles.rewardTitle}>Bonus Coins</Text>
+            <Text style={styles.rewardBody}>
+              Watch one short ad to earn {BONUS_REWARDED_AD_COINS} coins. Daily
+              challenges add even more rewards.
+            </Text>
+            <CustomButton
+              disabled={!isCoinHydrated || isRewardAdLoading}
+              label={
+                isRewardAdLoading
+                  ? "Loading ad..."
+                  : `Watch Ad +${BONUS_REWARDED_AD_COINS}`
+              }
+              onPress={() => {
+                void handleWatchRewardedAd();
+              }}
+              style={styles.rewardButton}
+            />
+            {rewardNotice ? (
+              <Text style={styles.rewardNotice}>{rewardNotice}</Text>
+            ) : null}
+          </View>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"
@@ -266,11 +292,11 @@ export default function HomeScreen({ navigation }: Props) {
           <View style={styles.loginCard}>
             <Text style={styles.loginTitle}>You are building momentum.</Text>
             <Text style={styles.loginBody}>
-              Connect an account next to prepare for cloud sync and deeper
-              performance tracking once auth goes live.
+              Create an account to keep access to sign-in features and future
+              progress sync improvements.
             </Text>
             <CustomButton
-              label="Switch to Account Preview"
+              label="Create Your Account"
               variant="success"
               onPress={() => navigation.navigate("AuthChoice")}
               icon={
@@ -306,7 +332,7 @@ export default function HomeScreen({ navigation }: Props) {
               </Text>
               <CustomButton
                 label="Open Daily Challenges"
-                onPress={() => navigation.navigate("DailyChallenges")}
+                onPress={handleOpenDailyChallenges}
                 style={styles.dailyButton}
               />
             </>
@@ -358,8 +384,13 @@ export default function HomeScreen({ navigation }: Props) {
         </Pressable>
       </ScrollView>
 
-      {Platform.OS !== "web" ? (
-        <View style={styles.bannerContainer}>
+      {Platform.OS !== "web" && bannerAdsEnabled && bannerAdUnitId ? (
+        <View
+          style={[
+            styles.bannerContainer,
+            { backgroundColor: activeTheme.colors.background },
+          ]}
+        >
           <BannerAd
             requestOptions={{ requestNonPersonalizedAdsOnly: true }}
             size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
@@ -374,7 +405,6 @@ export default function HomeScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   contentContainer: {
     padding: 20,
@@ -646,7 +676,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    backgroundColor: COLORS.background,
     paddingBottom: 8,
     paddingTop: 8,
   },

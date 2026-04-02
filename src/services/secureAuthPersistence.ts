@@ -1,9 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import type { Persistence } from "firebase/auth";
 
 type PersistedAuthValue = unknown;
 
-type FirebasePersistenceInstance = {
+type SecureAuthPersistence = Persistence & {
   type: "LOCAL";
   _isAvailable(): Promise<boolean>;
   _set(key: string, value: PersistedAuthValue): Promise<void>;
@@ -12,8 +13,6 @@ type FirebasePersistenceInstance = {
   _addListener(key: string, listener: unknown): void;
   _removeListener(key: string, listener: unknown): void;
 };
-
-type FirebasePersistenceFactory = new () => FirebasePersistenceInstance;
 
 const SECURE_STORE_KEY_PREFIX = "firebase_auth";
 const SECURE_STORE_PROBE_KEY = `${SECURE_STORE_KEY_PREFIX}.probe`;
@@ -128,9 +127,8 @@ async function migrateLegacyAsyncStorageValue<T>(key: string) {
   };
 }
 
-export const secureAuthPersistence: FirebasePersistenceFactory = class {
-  static type: "LOCAL" = "LOCAL";
-  type: "LOCAL" = "LOCAL";
+export const secureAuthPersistence: SecureAuthPersistence = {
+  type: "LOCAL",
 
   async _isAvailable() {
     try {
@@ -154,7 +152,7 @@ export const secureAuthPersistence: FirebasePersistenceFactory = class {
     } catch {
       return false;
     }
-  }
+  },
 
   async _set(key: string, value: PersistedAuthValue) {
     const serializedValue = JSON.stringify(value);
@@ -187,7 +185,7 @@ export const secureAuthPersistence: FirebasePersistenceFactory = class {
     }
 
     await AsyncStorage.removeItem(key);
-  }
+  },
 
   async _get<T>(key: string) {
     const secureValue = await readSecureValue(key);
@@ -202,20 +200,20 @@ export const secureAuthPersistence: FirebasePersistenceFactory = class {
       return null;
     }
 
-    await this._set(key, legacyValue.parsedValue);
+    await secureAuthPersistence._set(key, legacyValue.parsedValue);
     return legacyValue.parsedValue;
-  }
+  },
 
   async _remove(key: string) {
     await removeSecureValue(key);
     await AsyncStorage.removeItem(key);
-  }
+  },
 
   _addListener(_key: string, _listener: unknown) {
     // SecureStore does not provide cross-process change listeners.
-  }
+  },
 
   _removeListener(_key: string, _listener: unknown) {
     // SecureStore does not provide cross-process change listeners.
-  }
+  },
 };

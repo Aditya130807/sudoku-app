@@ -1,12 +1,13 @@
-import React, { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import React, { useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
 import Header from "../components/Header";
 import { COLORS } from "../constants/colors";
+import { useAppTheme } from "../context/ThemeContext";
 import { RootStackParamList } from "../navigation/types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Tutorial">;
@@ -31,12 +32,19 @@ const SLIDES = [
 ];
 
 export default function TutorialScreen({ navigation, route }: Props) {
+  const { activeTheme } = useAppTheme();
   const [index, setIndex] = useState(0);
   const slide = SLIDES[index];
   const lastSlide = index === SLIDES.length - 1;
 
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={[
+        styles.safeArea,
+        { backgroundColor: activeTheme.colors.background },
+      ]}
+    >
       <View style={styles.container}>
         <Header
           title="Tutorial"
@@ -95,7 +103,6 @@ export default function TutorialScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   container: {
     flex: 1,

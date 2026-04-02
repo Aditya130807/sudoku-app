@@ -1,9 +1,19 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { Board, CellPosition, CellStateBoard, GameSession } from "../game/types";
+import {
+  Board,
+  CellPosition,
+  CellStateBoard,
+  GameSession,
+  LevelProgress,
+} from "../game/types";
 import { cloneBoard, cloneCellStateBoard } from "../game/validator";
 
 const ACTIVE_GAME_STORAGE_KEY = "@sudoku_ryve/active_game";
+const HAS_ENTERED_APP_STORAGE_KEY = "hasEnteredApp";
+const GUEST_ID_STORAGE_KEY = "@sudoku_ryve/guest_id";
+const GUEST_PROGRESS_STORAGE_KEY = "@sudoku_ryve/guest_progress";
+const GUEST_STATS_STORAGE_KEY = "@sudoku_ryve/guest_stats";
 
 export const STORAGE_KEYS = {
   USER_COINS: "USER_COINS",
@@ -22,8 +32,41 @@ export interface StoredDailyEconomyState {
   streakCount: number;
 }
 
+export interface GuestStatsSnapshot {
+  completedLevels: number;
+  lastPlayedLevelId: number | null;
+  claimedChallengeIds: string[];
+  streakCount: number;
+  lastClaimDate: string | null;
+}
+
+export interface GuestSessionSnapshot {
+  guestId: string;
+  coins: number;
+  progress: Record<number, LevelProgress>;
+  stats: GuestStatsSnapshot;
+}
+
+export interface PersistedUserDataSnapshot {
+  coins: number;
+  progress: Record<number, LevelProgress>;
+  stats: GuestStatsSnapshot;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStoredClaimedChallengesPayload(
+  value: unknown,
+): value is StoredClaimedChallengesPayload {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.ids) &&
+    value.ids.every((entry): entry is string => typeof entry === "string") &&
+    typeof value.streakCount === "number" &&
+    Number.isFinite(value.streakCount)
+  );
 }
 
 function isValidCellValue(value: unknown): value is number | null {
@@ -44,7 +87,7 @@ function isValidBoard(board: unknown): board is Board {
       (row) =>
         Array.isArray(row) &&
         row.length === 9 &&
-        row.every((value) => isValidCellValue(value))
+        row.every((value) => isValidCellValue(value)),
     )
   );
 }
@@ -57,7 +100,7 @@ function isValidNotes(value: unknown): value is number[] {
         typeof entry === "number" &&
         Number.isInteger(entry) &&
         entry >= 1 &&
-        entry <= 9
+        entry <= 9,
     )
   );
 }
@@ -74,13 +117,15 @@ function isValidCellStateBoard(board: unknown): board is CellStateBoard {
           (cell) =>
             isRecord(cell) &&
             isValidCellValue(cell.value) &&
-            isValidNotes(cell.notes)
-        )
+            isValidNotes(cell.notes),
+        ),
     )
   );
 }
 
-function isValidCellPosition(position: unknown): position is CellPosition | null {
+function isValidCellPosition(
+  position: unknown,
+): position is CellPosition | null {
   if (position === null) {
     return true;
   }
@@ -159,9 +204,7 @@ function cloneSession(session: GameSession): GameSession {
     solution: cloneBoard(session.solution),
     board: cloneBoard(session.board),
     cellStates: cloneCellStateBoard(session.cellStates),
-    selectedCell: session.selectedCell
-      ? { ...session.selectedCell }
-      : null,
+    selectedCell: session.selectedCell ? { ...session.selectedCell } : null,
   };
 }
 
@@ -180,7 +223,7 @@ function parseStoredCoins(rawValue: string | null): number {
 }
 
 function parseStoredClaimedChallenges(
-  rawValue: string | null
+  rawValue: string | null,
 ): StoredClaimedChallengesPayload {
   if (!rawValue) {
     return {
@@ -192,30 +235,16 @@ function parseStoredClaimedChallenges(
   try {
     const parsedValue: unknown = JSON.parse(rawValue);
 
-    if (
-      typeof parsedValue !== "object" ||
-      parsedValue === null ||
-      Array.isArray(parsedValue)
-    ) {
+    if (!isStoredClaimedChallengesPayload(parsedValue)) {
       return {
         ids: [],
         streakCount: 0,
       };
     }
 
-    const ids = Array.isArray(parsedValue.ids)
-      ? parsedValue.ids.filter((value): value is string => typeof value === "string")
-      : [];
-    const streakCount =
-      typeof parsedValue.streakCount === "number" &&
-      Number.isFinite(parsedValue.streakCount) &&
-      parsedValue.streakCount >= 0
-        ? Math.floor(parsedValue.streakCount)
-        : 0;
-
     return {
-      ids,
-      streakCount,
+      ids: parsedValue.ids.map((value) => value.trim()).filter(Boolean),
+      streakCount: Math.max(0, Math.floor(parsedValue.streakCount)),
     };
   } catch {
     return {
@@ -225,12 +254,252 @@ function parseStoredClaimedChallenges(
   }
 }
 
+function parseProgressSnapshot(
+  rawValue: string | null,
+): Record<number, LevelProgress> {
+  if (!rawValue) {
+    return {};
+  }
+
+  try {
+    const parsedValue: unknown = JSON.parse(rawValue);
+
+    if (!isRecord(parsedValue)) {
+      return {};
+    }
+
+    return parsedValue as unknown as Record<number, LevelProgress>;
+  } catch {
+    return {};
+  }
+}
+
+function parseGuestStatsSnapshot(rawValue: string | null): GuestStatsSnapshot {
+  const defaultStats: GuestStatsSnapshot = {
+    completedLevels: 0,
+    lastPlayedLevelId: null,
+    claimedChallengeIds: [],
+    streakCount: 0,
+    lastClaimDate: null,
+  };
+
+  if (!rawValue) {
+    return defaultStats;
+  }
+
+  try {
+    const parsedValue: unknown = JSON.parse(rawValue);
+
+    if (!isRecord(parsedValue)) {
+      return defaultStats;
+    }
+
+    const completedLevels =
+      typeof parsedValue.completedLevels === "number" &&
+      Number.isFinite(parsedValue.completedLevels) &&
+      parsedValue.completedLevels >= 0
+        ? Math.floor(parsedValue.completedLevels)
+        : 0;
+
+    const lastPlayedLevelId =
+      typeof parsedValue.lastPlayedLevelId === "number" &&
+      Number.isInteger(parsedValue.lastPlayedLevelId) &&
+      parsedValue.lastPlayedLevelId > 0
+        ? parsedValue.lastPlayedLevelId
+        : null;
+
+    const claimedChallengeIds = Array.isArray(parsedValue.claimedChallengeIds)
+      ? parsedValue.claimedChallengeIds.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
+
+    const streakCount =
+      typeof parsedValue.streakCount === "number" &&
+      Number.isFinite(parsedValue.streakCount) &&
+      parsedValue.streakCount > 0
+        ? Math.floor(parsedValue.streakCount)
+        : 0;
+
+    const lastClaimDate =
+      typeof parsedValue.lastClaimDate === "string" &&
+      parsedValue.lastClaimDate.trim()
+        ? parsedValue.lastClaimDate.trim()
+        : null;
+
+    return {
+      completedLevels,
+      lastPlayedLevelId,
+      claimedChallengeIds,
+      streakCount,
+      lastClaimDate,
+    };
+  } catch {
+    return defaultStats;
+  }
+}
+
 export const storageService = {
+  async clearAllLocalData(): Promise<void> {
+    await AsyncStorage.multiRemove([
+      GUEST_ID_STORAGE_KEY,
+      GUEST_PROGRESS_STORAGE_KEY,
+      GUEST_STATS_STORAGE_KEY,
+      ACTIVE_GAME_STORAGE_KEY,
+      STORAGE_KEYS.USER_COINS,
+      STORAGE_KEYS.CLAIMED_CHALLENGES,
+      STORAGE_KEYS.LAST_CLAIM_DATE,
+    ]);
+  },
+
+  async markHasEnteredApp(): Promise<void> {
+    await AsyncStorage.setItem(HAS_ENTERED_APP_STORAGE_KEY, "true");
+  },
+
+  async hasEnteredApp(): Promise<boolean> {
+    try {
+      const value = await AsyncStorage.getItem(HAS_ENTERED_APP_STORAGE_KEY);
+      return value === "true";
+    } catch {
+      return false;
+    }
+  },
+
+  async ensureGuestId(): Promise<string> {
+    const existingGuestId = await AsyncStorage.getItem(GUEST_ID_STORAGE_KEY);
+
+    if (existingGuestId && existingGuestId.trim()) {
+      return existingGuestId;
+    }
+
+    const guestId = `guest_${Date.now()}`;
+    await AsyncStorage.setItem(GUEST_ID_STORAGE_KEY, guestId);
+    return guestId;
+  },
+
+  async getGuestId(): Promise<string | null> {
+    try {
+      const guestId = await AsyncStorage.getItem(GUEST_ID_STORAGE_KEY);
+
+      if (!guestId || !guestId.trim()) {
+        return null;
+      }
+
+      return guestId;
+    } catch {
+      return null;
+    }
+  },
+
+  async saveGuestProgress(
+    progress: Record<number, LevelProgress>,
+  ): Promise<void> {
+    await AsyncStorage.setItem(
+      GUEST_PROGRESS_STORAGE_KEY,
+      JSON.stringify(progress),
+    );
+  },
+
+  async saveGuestStats(stats: GuestStatsSnapshot): Promise<void> {
+    await AsyncStorage.setItem(GUEST_STATS_STORAGE_KEY, JSON.stringify(stats));
+  },
+
+  async loadGuestProgressSnapshot(): Promise<Record<number, LevelProgress>> {
+    try {
+      const rawProgress = await AsyncStorage.getItem(
+        GUEST_PROGRESS_STORAGE_KEY,
+      );
+      return parseProgressSnapshot(rawProgress);
+    } catch {
+      return {};
+    }
+  },
+
+  async loadGuestStatsSnapshot(): Promise<GuestStatsSnapshot> {
+    try {
+      const [rawStats, dailyEconomyState] = await Promise.all([
+        AsyncStorage.getItem(GUEST_STATS_STORAGE_KEY),
+        this.loadDailyEconomyState(),
+      ]);
+      const parsedStats = parseGuestStatsSnapshot(rawStats);
+
+      return {
+        ...parsedStats,
+        claimedChallengeIds:
+          parsedStats.claimedChallengeIds.length > 0
+            ? parsedStats.claimedChallengeIds
+            : dailyEconomyState.claimedChallengeIds,
+        streakCount:
+          parsedStats.streakCount > 0
+            ? parsedStats.streakCount
+            : dailyEconomyState.streakCount,
+        lastClaimDate:
+          parsedStats.lastClaimDate ?? dailyEconomyState.lastClaimDate,
+      };
+    } catch {
+      return {
+        completedLevels: 0,
+        lastPlayedLevelId: null,
+        claimedChallengeIds: [],
+        streakCount: 0,
+        lastClaimDate: null,
+      };
+    }
+  },
+
+  async loadGuestUserData(): Promise<PersistedUserDataSnapshot> {
+    const [coins, progress, stats] = await Promise.all([
+      this.loadCoins(),
+      this.loadGuestProgressSnapshot(),
+      this.loadGuestStatsSnapshot(),
+    ]);
+
+    return {
+      coins,
+      progress,
+      stats,
+    };
+  },
+
+  async saveGuestUserData(snapshot: PersistedUserDataSnapshot): Promise<void> {
+    await Promise.all([
+      this.saveCoins(snapshot.coins),
+      this.saveGuestProgress(snapshot.progress),
+      this.saveGuestStats(snapshot.stats),
+      this.saveDailyEconomyState({
+        claimedChallengeIds: snapshot.stats.claimedChallengeIds,
+        streakCount: snapshot.stats.streakCount,
+        lastClaimDate: snapshot.stats.lastClaimDate,
+      }),
+    ]);
+  },
+
+  async loadGuestSessionSnapshot(): Promise<GuestSessionSnapshot | null> {
+    const guestId = await this.getGuestId();
+
+    if (!guestId) {
+      return null;
+    }
+
+    const { coins, progress, stats } = await this.loadGuestUserData();
+
+    return {
+      guestId,
+      coins,
+      progress,
+      stats,
+    };
+  },
+
+  async clearGuestSessionSnapshot(): Promise<void> {
+    await this.clearAllLocalData();
+  },
+
   async saveGame(session: GameSession): Promise<void> {
     try {
       await AsyncStorage.setItem(
         ACTIVE_GAME_STORAGE_KEY,
-        JSON.stringify(cloneSession(session))
+        JSON.stringify(cloneSession(session)),
       );
     } catch {
       // Avoid surfacing storage failures to the gameplay flow.
@@ -314,7 +583,9 @@ export const storageService = {
     streakCount,
   }: StoredDailyEconomyState): Promise<void> {
     const safeIds = claimedChallengeIds
-      .filter((challengeId): challengeId is string => typeof challengeId === "string")
+      .filter(
+        (challengeId): challengeId is string => typeof challengeId === "string",
+      )
       .map((challengeId) => challengeId.trim())
       .filter(Boolean);
     const safeStreakCount =
@@ -332,9 +603,16 @@ export const storageService = {
         JSON.stringify({
           ids: safeIds,
           streakCount: safeStreakCount,
-        })
+        }),
       ),
-      AsyncStorage.setItem(STORAGE_KEYS.LAST_CLAIM_DATE, normalizedLastClaimDate),
+      AsyncStorage.setItem(
+        STORAGE_KEYS.LAST_CLAIM_DATE,
+        normalizedLastClaimDate,
+      ),
     ]);
+  },
+
+  async clearLocalAccountData(): Promise<void> {
+    await this.clearAllLocalData();
   },
 };

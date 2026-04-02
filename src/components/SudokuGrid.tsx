@@ -2,7 +2,7 @@ import React from "react";
 import { Image, ImageSourcePropType, StyleSheet, View } from "react-native";
 
 import { COLORS } from "../constants/colors";
-import type { ThemeColors } from "../constants/themes";
+import type { ThemeColors, ThemeId } from "../constants/themes";
 import { getGridConfig } from "../game/difficulty";
 import {
   Board,
@@ -11,7 +11,7 @@ import {
   GridSize,
   SectionCompletion,
 } from "../game/types";
-import { getBoxIndex, getCellKey, isInSameSection } from "../game/validator";
+import { getCellKey, isInSameSection } from "../game/validator";
 import { hexToRgba } from "../utils/colorUtils";
 import Cell from "./Cell";
 
@@ -19,12 +19,15 @@ interface SudokuGridProps {
   boardSize: number;
   size: GridSize;
   board: Board;
+  solution: Board;
   cellStates: CellStateBoard;
   puzzle: Board;
   selectedCell: CellPosition | null;
   selectedValue: number | null;
   incorrectCellKeys: Set<string>;
   completedSections: SectionCompletion;
+  hintHighlight: Record<string, boolean>;
+  hintErrors: Record<string, boolean>;
   onPressCell: (row: number, col: number) => void;
   gridImage: ImageSourcePropType;
   gridViewport?: {
@@ -33,6 +36,7 @@ interface SudokuGridProps {
     width: number;
     height: number;
   };
+  themeId?: ThemeId;
   themeColors?: ThemeColors;
 }
 
@@ -40,15 +44,19 @@ export default function SudokuGrid({
   boardSize,
   size,
   board,
+  solution,
   cellStates,
   puzzle,
   selectedCell,
   selectedValue,
   incorrectCellKeys,
-  completedSections,
+  completedSections: _completedSections,
+  hintHighlight,
+  hintErrors,
   onPressCell,
   gridImage,
   gridViewport,
+  themeId,
   themeColors,
 }: SudokuGridProps) {
   const gridDimension = 9;
@@ -69,11 +77,41 @@ export default function SudokuGrid({
 
   const textColor = themeColors?.text ?? COLORS.text;
   const lineColor = hexToRgba(textColor, 0.28);
+  const correctColor =
+    themeId === "classic"
+      ? "#22C55E"
+      : (themeColors?.correctColor ?? "#22C55E");
+  const grid = board;
+
+  function isRowComplete(rowIndex: number) {
+    return grid[rowIndex].every(
+      (val, colIndex) => val !== null && val === solution[rowIndex][colIndex],
+    );
+  }
+
+  function isColComplete(colIndex: number) {
+    return grid.every(
+      (row, rowIndex) =>
+        row[colIndex] !== null &&
+        row[colIndex] === solution[rowIndex][colIndex],
+    );
+  }
+
+  function isBoxComplete(boxRow: number, boxCol: number) {
+    for (let r = boxRow * 3; r < boxRow * 3 + 3; r += 1) {
+      for (let c = boxCol * 3; c < boxCol * 3 + 3; c += 1) {
+        if (grid[r][c] === null || grid[r][c] !== solution[r][c]) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
 
   const cells = board.flatMap((row, rowIndex) =>
     row.map((value, colIndex) => {
       const cellPosition = { row: rowIndex, col: colIndex };
-      const boxIndex = getBoxIndex(rowIndex, colIndex, config);
       const isSelected =
         selectedCell?.row === rowIndex && selectedCell?.col === colIndex;
       const isRelated =
@@ -85,10 +123,14 @@ export default function SudokuGrid({
         value !== null &&
         value === selectedValue &&
         !isSelected;
-      const isCompleted =
-        completedSections.rows.includes(rowIndex) ||
-        completedSections.columns.includes(colIndex) ||
-        completedSections.boxes.includes(boxIndex);
+      const rowDone = isRowComplete(rowIndex);
+      const colDone = isColComplete(colIndex);
+      const boxDone = isBoxComplete(
+        Math.floor(rowIndex / 3),
+        Math.floor(colIndex / 3),
+      );
+      const isLineComplete = rowDone || colDone || boxDone;
+      const hintKey = `${rowIndex}-${colIndex}`;
 
       return (
         <Cell
@@ -103,7 +145,10 @@ export default function SudokuGrid({
           isRelated={isRelated}
           isMatching={isMatching}
           isIncorrect={incorrectCellKeys.has(getCellKey(rowIndex, colIndex))}
-          isCompleted={isCompleted}
+          isHintHighlighted={!!hintHighlight[hintKey]}
+          isHintError={!!hintErrors[hintKey]}
+          isLineComplete={isLineComplete}
+          correctColor={correctColor}
           onPress={() => onPressCell(rowIndex, colIndex)}
           themeColors={themeColors}
         />

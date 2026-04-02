@@ -4,27 +4,36 @@
     "slug": "sudoku-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/icon.png",
     "scheme": "sudokuapp",
     "userInterfaceStyle": "automatic",
+
     "ios": {
+      "icon": "./assets/icon.png",
       "supportsTablet": true
     },
+
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.pandey_sachin11.sudokuapp"
     },
+
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-8048301971162422~8360590993"
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -37,16 +46,12 @@
           }
         }
       ],
-      "expo-secure-store",
-      [
-        "./plugins/with-admob-app-ids.js",
-        {
-          "androidAppId": "ca-app-pub-8048301971162422~8360590993",
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
-        }
-      ]
+      "expo-secure-store"
     ],
+
     "extra": {
+      "privacyPolicyUrl": "https://example.com/sudoku-ryve/privacy",
+      "accountDeletionUrl": "https://example.com/sudoku-ryve/delete-account",
       "admob": {
         "androidBannerUnitId": "ca-app-pub-8048301971162422/3047292788",
         "iosBannerUnitId": "",
@@ -56,6 +61,7 @@
         "iosRewardedUnitId": ""
       }
     },
+
     "experiments": {
       "reactCompiler": true
     }

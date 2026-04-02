@@ -1,7 +1,7 @@
-import React, { useMemo } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import React, { useMemo } from "react";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
@@ -10,9 +10,7 @@ import { COLORS } from "../constants/colors";
 import { useDailyChallenges } from "../context/DailyChallengeContext";
 import { useAppTheme } from "../context/ThemeContext";
 import { RootStackParamList } from "../navigation/types";
-import {
-  DAILY_CHALLENGE_UNLOCK_LEVEL,
-} from "../services/dailyChallengeService";
+import { DAILY_CHALLENGE_UNLOCK_LEVEL } from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
 import { hexToRgba } from "../utils/colorUtils";
 
@@ -24,7 +22,7 @@ export default function DailyChallengeScreen({ navigation }: Props) {
   const themeColors = activeTheme.colors;
   const styles = useMemo(
     () => createDailyChallengeStyles(themeColors),
-    [themeColors]
+    [themeColors],
   );
   const userLevel = gameService.getNextPlayableLevelId();
   const isUnlocked = userLevel >= DAILY_CHALLENGE_UNLOCK_LEVEL;
@@ -53,7 +51,9 @@ export default function DailyChallengeScreen({ navigation }: Props) {
           title="Daily Challenges"
           themeColors={themeColors}
           leftAction={{
-            icon: <Ionicons color={themeColors.text} name="arrow-back" size={20} />,
+            icon: (
+              <Ionicons color={themeColors.text} name="arrow-back" size={20} />
+            ),
             onPress: () => navigation.goBack(),
           }}
         />
@@ -104,7 +104,9 @@ export default function DailyChallengeScreen({ navigation }: Props) {
                       </View>
 
                       <View style={styles.rewardBadge}>
-                        <Text style={styles.rewardBadgeText}>+{challenge.reward}</Text>
+                        <Text style={styles.rewardBadgeText}>
+                          +{challenge.reward}
+                        </Text>
                       </View>
                     </View>
 
@@ -151,6 +153,7 @@ function createDailyChallengeStyles(themeColors: {
     contentContainer: {
       padding: 20,
       paddingBottom: 28,
+      backgroundColor: themeColors.background,
     },
     summaryCard: {
       backgroundColor: themeColors.grid,

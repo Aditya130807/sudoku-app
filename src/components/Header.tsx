@@ -1,14 +1,12 @@
 import React, { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
-import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { COLORS } from "../constants/colors";
 import { useCoins } from "../context/CoinContext";
-import { RootStackParamList } from "../navigation/types";
 import type { ThemeColors } from "../constants/themes";
 import { hexToRgba } from "../utils/colorUtils";
+import { onButtonPress } from "../utils/feedback";
 
 interface HeaderAction {
   icon?: ReactNode;
@@ -31,8 +29,6 @@ function CoinBalance({
 }: {
   themeColors?: ThemeColors;
 }) {
-  const navigation =
-    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { coins, isHydrated } = useCoins();
   const backgroundColor = themeColors?.grid ?? COLORS.surface;
   const borderColor = themeColors?.text
@@ -41,9 +37,7 @@ function CoinBalance({
   const textColor = themeColors?.text ?? COLORS.text;
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={() => navigation.navigate("Marketplace")}
+    <View
       style={[
         styles.coinBalance,
         {
@@ -60,7 +54,7 @@ function CoinBalance({
       >
         {isHydrated ? coins : "..."}
       </Text>
-    </Pressable>
+    </View>
   );
 }
 
@@ -80,10 +74,14 @@ function ActionButton({
     ? hexToRgba(themeColors.text, 0.2)
     : COLORS.border;
   const labelColor = themeColors?.text ?? COLORS.text;
+  const handlePress = () => {
+    void onButtonPress();
+    action.onPress();
+  };
 
   return (
     <Pressable
-      onPress={action.onPress}
+      onPress={handlePress}
       style={[
         styles.actionButton,
         {

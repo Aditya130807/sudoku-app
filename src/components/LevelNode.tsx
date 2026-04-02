@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { COLORS } from "../constants/colors";
+import { onButtonPress } from "../utils/feedback";
 
 export type LevelNodeState = "locked" | "available" | "current" | "completed";
 
@@ -26,12 +27,16 @@ export default function LevelNode({ levelId, state, onPress }: LevelNodeProps) {
   const diameter = DIAMETERS[state];
 
   const theme = getTheme(state);
+  const handlePress = useCallback(() => {
+    void onButtonPress();
+    onPress();
+  }, [onPress]);
 
   return (
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
-      onPress={onPress}
+      onPress={handlePress}
       style={({ pressed }) => [
         styles.pressable,
         {
@@ -114,4 +119,3 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
 });
-

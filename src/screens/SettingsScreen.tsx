@@ -1,7 +1,16 @@
-import React from "react";
-import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import Constants from "expo-constants";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
@@ -12,10 +21,18 @@ import { useDailyChallenges } from "../context/DailyChallengeContext";
 import { useAppTheme } from "../context/ThemeContext";
 import { GameSettings } from "../game/types";
 import { RootStackParamList } from "../navigation/types";
+import { authService } from "../services/authService";
 import { gameService } from "../services/gameService";
-import { useGameStore } from "../store/gameStore";
+import { gameStore, useGameStore } from "../store/gameStore";
+import { useUserStore, userStore } from "../store/userStore";
+import { getAuthErrorCode } from "../utils/authErrors";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Settings">;
+
+type AppExtraConfig = {
+  privacyPolicyUrl?: string;
+  accountDeletionUrl?: string;
+};
 
 const SETTING_LABELS: {
   key: keyof GameSettings;
@@ -44,16 +61,201 @@ const SETTING_LABELS: {
   },
 ];
 
+function getDeleteAccountErrorMessage(error: unknown) {
+  const errorCode = getAuthErrorCode(error);
+
+  if (errorCode === "auth/requires-recent-login") {
+    return "Please sign in again before deleting your account.";
+  }
+
+  return "We couldn't delete your account right now. Please try again.";
+}
+
 export default function SettingsScreen({ navigation }: Props) {
-  const { activeTheme, unlockedThemeIds } = useAppTheme();
-  const { coins, isHydrated: isCoinHydrated } = useCoins();
-  const { claimedChallengeIds, challenges } = useDailyChallenges();
+  const { activeTheme, resetThemeState, unlockedThemeIds } = useAppTheme();
+  const { coins, isHydrated: isCoinHydrated, resetCoins } = useCoins();
+  const { claimedChallengeIds, challenges, resetDailyChallenges } =
+    useDailyChallenges();
   const settings = useGameStore((state) => state.settings);
+  const user = useUserStore((state) => state);
+  const isSignedIn = useUserStore((state) => state.mode === "signed_in");
+  const userEmail = useUserStore((state) => state.email);
+  const isGuest = user.mode === "guest" || !user.uid;
+  const [accountFeedback, setAccountFeedback] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const isMountedRef = useRef(true);
+  const appExtraConfig =
+    (Constants.expoConfig?.extra as AppExtraConfig | undefined) ?? {};
+  const privacyPolicyUrl = appExtraConfig.privacyPolicyUrl?.trim() ?? "";
+  const accountDeletionUrl = appExtraConfig.accountDeletionUrl?.trim() ?? "";
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const openExternalPage = async (url: string, fallbackMessage: string) => {
+    if (!url) {
+      setAccountFeedback(fallbackMessage);
+      return;
+    }
+
+    const supported = await Linking.canOpenURL(url);
+
+    if (!supported) {
+      setAccountFeedback(fallbackMessage);
+      return;
+    }
+
+    setAccountFeedback(null);
+    await Linking.openURL(url);
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!isSignedIn) {
+      return;
+    }
+
+    setAccountFeedback(null);
+    setIsDeletingAccount(true);
+
+    try {
+      await authService.deleteAccount();
+      await resetThemeState();
+      resetCoins();
+      resetDailyChallenges();
+      gameStore.reset();
+      userStore.resetUser();
+    } catch (error: unknown) {
+      if (__DEV__) {
+        console.warn("[account:delete]", error);
+      }
+
+      if (isMountedRef.current) {
+        setAccountFeedback(getDeleteAccountErrorMessage(error));
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeletingAccount(false);
+      }
+    }
+  };
+
+  const performSignOut = async () => {
+    if (!isSignedIn || isSigningOut) {
+      return;
+    }
+
+    setAccountFeedback(null);
+    setIsSigningOut(true);
+
+    try {
+      await authService.logout();
+      resetCoins();
+      resetDailyChallenges();
+      gameStore.reset();
+      userStore.resetUser();
+
+      if (isMountedRef.current) {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: "AuthChoice" }],
+        });
+      }
+    } catch (error: unknown) {
+      if (__DEV__) {
+        console.warn("[account:logout]", error);
+      }
+
+      if (isMountedRef.current) {
+        const errorCode = getAuthErrorCode(error);
+        const message =
+          errorCode === "auth/network-request-failed"
+            ? "Network error. Check your internet connection."
+            : "We couldn't sign you out right now. Please try again.";
+        setAccountFeedback(message);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsSigningOut(false);
+      }
+    }
+  };
+
+  const handleSignOut = () => {
+    if (!isSignedIn || isSigningOut || isDeletingAccount) {
+      return;
+    }
+
+    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: () => {
+          void performSignOut();
+        },
+      },
+    ]);
+  };
+
+  const confirmDeleteAccount = () => {
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your account and clears the saved data on this device. A web deletion page is also available below.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void handleDeleteAccount();
+          },
+        },
+      ],
+    );
+  };
+
+  const handleOpenDailyChallenges = () => {
+    if (isGuest) {
+      Alert.alert(
+        "Login Required",
+        "You need to be logged in to access Daily Challenges.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Login",
+            onPress: () => navigation.navigate("AuthChoice"),
+          },
+        ],
+      );
+      return;
+    }
+
+    navigation.navigate("DailyChallenges");
+  };
 
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={[
+        styles.safeArea,
+        { backgroundColor: activeTheme.colors.background },
+      ]}
+    >
       <ScrollView
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { backgroundColor: activeTheme.colors.background },
+        ]}
         showsVerticalScrollIndicator={false}
         style={styles.scrollView}
       >
@@ -71,11 +273,16 @@ export default function SettingsScreen({ navigation }: Props) {
             <View key={setting.key} style={styles.settingCard}>
               <View style={styles.settingCopy}>
                 <Text style={styles.settingTitle}>{setting.title}</Text>
-                <Text style={styles.settingDescription}>{setting.description}</Text>
+                <Text style={styles.settingDescription}>
+                  {setting.description}
+                </Text>
               </View>
               <Switch
                 onValueChange={() => gameService.toggleSetting(setting.key)}
-                trackColor={{ false: COLORS.borderStrong, true: COLORS.primary }}
+                trackColor={{
+                  false: COLORS.borderStrong,
+                  true: COLORS.primary,
+                }}
                 thumbColor={COLORS.surface}
                 value={settings[setting.key]}
               />
@@ -88,11 +295,14 @@ export default function SettingsScreen({ navigation }: Props) {
             <View style={styles.themeCopy}>
               <Text style={styles.themeTitle}>Theme Store</Text>
               <Text style={styles.themeDescription}>
-                Spend coins on board looks and apply them instantly on this device.
+                Spend coins on board looks and apply them instantly on this
+                device.
               </Text>
             </View>
             <View style={styles.themeBadge}>
-              <Text style={styles.themeBadgeText}>{unlockedThemeIds.length} unlocked</Text>
+              <Text style={styles.themeBadgeText}>
+                {unlockedThemeIds.length} unlocked
+              </Text>
             </View>
           </View>
 
@@ -113,8 +323,8 @@ export default function SettingsScreen({ navigation }: Props) {
             <View style={styles.themeCopy}>
               <Text style={styles.themeTitle}>Economy</Text>
               <Text style={styles.themeDescription}>
-                Coins, daily rewards, and the mock marketplace are now connected to
-                AsyncStorage.
+                Earn coins by completing daily challenges and watching rewarded
+                ads. Marketplace purchases are coming soon.
               </Text>
             </View>
             <View style={styles.themeBadge}>
@@ -131,25 +341,94 @@ export default function SettingsScreen({ navigation }: Props) {
             </Text>
           </View>
 
-          <CustomButton
-            label="Open Marketplace"
-            onPress={() => navigation.navigate("Marketplace")}
-            style={styles.themeButton}
-          />
+          <View style={styles.themeMetaRow}>
+            <Text style={styles.themeMetaLabel}>Marketplace</Text>
+            <Text style={styles.themeMetaValue}>Coming Soon</Text>
+          </View>
           <CustomButton
             label="Open Daily Challenges"
-            onPress={() => navigation.navigate("DailyChallenges")}
-            style={styles.secondaryButton}
+            onPress={handleOpenDailyChallenges}
+            style={styles.themeButton}
             variant="secondary"
           />
         </View>
 
-        <View style={styles.futureCard}>
-          <Text style={styles.futureTitle}>Coming next</Text>
-          <Text style={styles.futureBody}>
-            Dark mode, Firebase sync, and daily challenge settings can slot into this
-            panel without changing the current architecture.
-          </Text>
+        <View style={styles.themeCard}>
+          <View style={styles.themeCardHeader}>
+            <View style={styles.themeCopy}>
+              <Text style={styles.themeTitle}>Account & Privacy</Text>
+              <Text style={styles.themeDescription}>
+                {isSignedIn
+                  ? "Review the privacy policy, use the web deletion page, or permanently delete your account from here."
+                  : "Review the privacy policy here. Sign in to manage account deletion options."}
+              </Text>
+            </View>
+          </View>
+
+          {isSignedIn && userEmail ? (
+            <View style={styles.themeMetaRow}>
+              <Text style={styles.themeMetaLabel}>Signed in as</Text>
+              <Text style={styles.themeMetaValue}>{userEmail}</Text>
+            </View>
+          ) : null}
+
+          <CustomButton
+            label="Open Privacy Policy"
+            onPress={() => {
+              void openExternalPage(
+                privacyPolicyUrl,
+                "Add a valid privacy policy URL in app config before release.",
+              );
+            }}
+            style={styles.themeButton}
+            variant="secondary"
+          />
+
+          {!isSignedIn ? (
+            <CustomButton
+              label="Login / Sign Up"
+              onPress={() => navigation.navigate("AuthChoice")}
+              style={styles.secondaryButton}
+              variant="secondary"
+            />
+          ) : null}
+
+          {isSignedIn ? (
+            <>
+              <CustomButton
+                label="Open Web Deletion Page"
+                onPress={() => {
+                  void openExternalPage(
+                    accountDeletionUrl,
+                    "Add a valid account deletion URL in app config before release.",
+                  );
+                }}
+                style={styles.secondaryButton}
+                variant="secondary"
+              />
+              <CustomButton
+                disabled={isDeletingAccount}
+                label={
+                  isDeletingAccount ? "Deleting Account..." : "Delete Account"
+                }
+                onPress={confirmDeleteAccount}
+                style={styles.deleteButton}
+                labelStyle={styles.deleteButtonLabel}
+              />
+              <CustomButton
+                disabled={isSigningOut || isDeletingAccount}
+                label={isSigningOut ? "Signing Out..." : "Sign Out"}
+                onPress={handleSignOut}
+                style={styles.signOutButton}
+                labelStyle={styles.signOutButtonLabel}
+                variant="secondary"
+              />
+            </>
+          ) : null}
+
+          {accountFeedback ? (
+            <Text style={styles.accountFeedback}>{accountFeedback}</Text>
+          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -159,7 +438,6 @@ export default function SettingsScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   scrollView: {
     flex: 1,
@@ -258,24 +536,32 @@ const styles = StyleSheet.create({
   secondaryButton: {
     marginTop: 12,
   },
-  futureCard: {
-    marginTop: 18,
-    backgroundColor: COLORS.surface,
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: COLORS.borderStrong,
+  signOutButton: {
+    marginTop: 12,
+    backgroundColor: "#EF4444",
+    borderWidth: 0,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
   },
-  futureTitle: {
-    color: COLORS.text,
-    fontSize: 18,
+  signOutButtonLabel: {
+    color: "#FFFFFF",
     fontWeight: "800",
   },
-  futureBody: {
+  deleteButton: {
+    marginTop: 18,
+    backgroundColor: "#FEE2E2",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+  },
+  deleteButtonLabel: {
+    color: "#DC2626",
+    fontWeight: "700",
+  },
+  accountFeedback: {
     color: COLORS.textMuted,
     fontSize: 14,
     lineHeight: 21,
-    marginTop: 8,
+    marginTop: 12,
   },
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { GameSession } from "../game/types";
 import { getElapsedSeconds } from "../services/gameService";
@@ -16,24 +16,36 @@ export function formatDuration(totalSeconds: number): string {
 
 export function useLiveElapsedSeconds(session: GameSession | null): number {
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-    session ? getElapsedSeconds(session) : 0
+    session ? getElapsedSeconds(session) : 0,
   );
+  const sessionRef = useRef<GameSession | null>(session);
 
   useEffect(() => {
+    sessionRef.current = session;
     setElapsedSeconds(session ? getElapsedSeconds(session) : 0);
+  }, [session]);
 
-    if (!session || session.status !== "playing") {
+  useEffect(() => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || activeSession.status !== "playing") {
       return undefined;
     }
 
     const interval = setInterval(() => {
-      setElapsedSeconds(getElapsedSeconds(session));
+      const currentSession = sessionRef.current;
+
+      if (!currentSession || currentSession.status !== "playing") {
+        return;
+      }
+
+      setElapsedSeconds(getElapsedSeconds(currentSession));
     }, 1000);
 
     return () => {
       clearInterval(interval);
     };
-  }, [session?.levelId, session?.status, session?.startedAt, session?.elapsedSeconds]);
+  }, [session?.status, session?.startedAt]);
 
   return elapsedSeconds;
 }

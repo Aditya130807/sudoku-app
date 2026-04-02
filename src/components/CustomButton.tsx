@@ -1,5 +1,6 @@
-import React, { ReactNode } from "react";
+import React, { ReactNode, useCallback } from "react";
 import {
+  ActivityIndicator,
   Pressable,
   StyleProp,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
 } from "react-native";
 
 import { COLORS } from "../constants/colors";
+import { onButtonPress } from "../utils/feedback";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "success";
 
@@ -20,6 +22,7 @@ interface CustomButtonProps {
   disabled?: boolean;
   fullWidth?: boolean;
   icon?: ReactNode;
+  isLoading?: boolean;
   style?: StyleProp<ViewStyle>;
   labelStyle?: StyleProp<TextStyle>;
 }
@@ -76,32 +79,47 @@ export default function CustomButton({
   disabled = false,
   fullWidth = false,
   icon,
+  isLoading = false,
   style,
   labelStyle,
 }: CustomButtonProps) {
+  const handlePress = useCallback(() => {
+    void onButtonPress();
+    onPress();
+  }, [onPress]);
+
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
+      disabled={disabled || isLoading}
+      onPress={handlePress}
       style={({ pressed }) => [
         styles.base,
         variantStyles[variant].container,
         fullWidth && styles.fullWidth,
-        disabled && styles.disabled,
-        pressed && !disabled && styles.pressed,
+        (disabled || isLoading) && styles.disabled,
+        pressed && !disabled && !isLoading && styles.pressed,
         style,
       ]}
     >
       <View style={styles.content}>
-        {icon ? <View style={styles.icon}>{icon}</View> : null}
-        <Text
-          adjustsFontSizeToFit
-          numberOfLines={1}
-          style={[styles.label, variantStyles[variant].label, labelStyle]}
-        >
-          {label}
-        </Text>
+        {isLoading ? (
+          <ActivityIndicator
+            size="small"
+            color={String(variantStyles[variant].label.color)}
+          />
+        ) : (
+          <>
+            {icon ? <View style={styles.icon}>{icon}</View> : null}
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={[styles.label, variantStyles[variant].label, labelStyle]}
+            >
+              {label}
+            </Text>
+          </>
+        )}
       </View>
     </Pressable>
   );
@@ -120,8 +138,8 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   pressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.985 }],
+    opacity: 0.86,
+    transform: [{ scale: 0.96 }],
   },
   disabled: {
     opacity: 0.45,

@@ -23,6 +23,9 @@ const requestOptions: RequestOptions = {
 };
 
 let initializePromise: Promise<unknown> | null = null;
+let interstitial: InterstitialAd | null = null;
+let interstitialLoaded = false;
+let interstitialLoadPromise: Promise<void> | null = null;
 
 const extraConfig =
   (Constants.expoConfig?.extra?.admob as AdMobExtraConfig | undefined) ?? {};
@@ -31,7 +34,7 @@ function resolveUnitId(
   testUnitId: string,
   androidUnitId?: string,
   iosUnitId?: string,
-) {
+): string | null {
   if (__DEV__) {
     return testUnitId;
   }
@@ -40,7 +43,7 @@ function resolveUnitId(
     Platform.OS === "android" ? androidUnitId : iosUnitId;
   return configuredUnitId && configuredUnitId.trim().length > 0
     ? configuredUnitId
-    : testUnitId;
+    : null;
 }
 
 export const bannerAdUnitId = resolveUnitId(
@@ -48,20 +51,30 @@ export const bannerAdUnitId = resolveUnitId(
   extraConfig.androidBannerUnitId,
   extraConfig.iosBannerUnitId,
 );
+export const bannerAdsEnabled = bannerAdUnitId !== null;
 
 const interstitialAdUnitId = resolveUnitId(
   TestIds.INTERSTITIAL,
   extraConfig.androidInterstitialUnitId,
   extraConfig.iosInterstitialUnitId,
 );
+export const interstitialAdsEnabled = interstitialAdUnitId !== null;
 
 const rewardedAdUnitId = resolveUnitId(
   TestIds.REWARDED,
   extraConfig.androidRewardedUnitId,
   extraConfig.iosRewardedUnitId,
 );
+export const rewardedAdsEnabled = rewardedAdUnitId !== null;
+
+const adsEnabled =
+  bannerAdsEnabled || interstitialAdsEnabled || rewardedAdsEnabled;
 
 export function initializeAds() {
+  if (!adsEnabled) {
+    return Promise.resolve();
+  }
+
   if (!initializePromise) {
     initializePromise = mobileAds()
       .initialize()
@@ -71,56 +84,136 @@ export function initializeAds() {
   return initializePromise;
 }
 
-export async function showInterstitialAd() {
-  const interstitial = InterstitialAd.createForAdRequest(
+export async function preloadInterstitialAd() {
+  if (!interstitialAdUnitId) {
+    return;
+  }
+
+  await initializeAds();
+
+  if (interstitial && interstitialLoaded) {
+    return;
+  }
+
+  if (interstitialLoadPromise) {
+    return interstitialLoadPromise;
+  }
+
+  interstitial = InterstitialAd.createForAdRequest(
     interstitialAdUnitId,
     requestOptions,
   );
+  const activeInterstitial = interstitial;
 
-  await new Promise<void>((resolve) => {
-    let resolved = false;
+  if (!activeInterstitial) {
+    return;
+  }
+
+  interstitialLoadPromise = new Promise<void>((resolve) => {
+    let settled = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const complete = () => {
-      if (resolved) {
+    const finish = (didLoad: boolean) => {
+      if (settled) {
         return;
       }
 
-      resolved = true;
+      settled = true;
       if (fallbackTimer) {
         clearTimeout(fallbackTimer);
       }
+
       unsubscribeLoaded();
+      unsubscribeError();
+      interstitialLoaded = didLoad && interstitial === activeInterstitial;
+
+      if (!interstitialLoaded && interstitial === activeInterstitial) {
+        interstitial = null;
+      }
+
+      interstitialLoadPromise = null;
+      resolve();
+    };
+
+    const unsubscribeLoaded = activeInterstitial.addAdEventListener(
+      AdEventType.LOADED,
+      () => {
+        finish(true);
+      },
+    );
+
+    const unsubscribeError = activeInterstitial.addAdEventListener(
+      AdEventType.ERROR,
+      () => {
+        finish(false);
+      },
+    );
+
+    fallbackTimer = setTimeout(() => {
+      finish(false);
+    }, 8000);
+
+    activeInterstitial.load();
+  });
+
+  return interstitialLoadPromise;
+}
+
+export async function showInterstitialAd() {
+  if (!interstitialAdUnitId) {
+    return;
+  }
+
+  await preloadInterstitialAd();
+
+  const activeInterstitial = interstitial;
+
+  if (!activeInterstitial || !interstitialLoaded) {
+    return;
+  }
+  const readyInterstitial = activeInterstitial;
+
+  interstitial = null;
+  interstitialLoaded = false;
+  interstitialLoadPromise = null;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       unsubscribeClosed();
       unsubscribeError();
       resolve();
     };
 
-    const unsubscribeLoaded = interstitial.addAdEventListener(
-      AdEventType.LOADED,
-      () => {
-        void interstitial.show().catch(() => {
-          complete();
-        });
-      },
-    );
-
-    const unsubscribeClosed = interstitial.addAdEventListener(
+    const unsubscribeClosed = readyInterstitial.addAdEventListener(
       AdEventType.CLOSED,
-      complete,
+      finish,
     );
 
-    const unsubscribeError = interstitial.addAdEventListener(
+    const unsubscribeError = readyInterstitial.addAdEventListener(
       AdEventType.ERROR,
-      complete,
+      finish,
     );
 
-    fallbackTimer = setTimeout(complete, 2500);
-    interstitial.load();
+    void readyInterstitial.show().catch(() => {
+      finish();
+    });
   });
+
+  void preloadInterstitialAd();
 }
 
 export async function showRewardedAd() {
+  if (!rewardedAdUnitId) {
+    return false;
+  }
+
   const rewardedAd = RewardedAd.createForAdRequest(
     rewardedAdUnitId,
     requestOptions,

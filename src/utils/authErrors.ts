@@ -22,7 +22,7 @@ export function getAuthErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
-export function getAuthErrorMessage(error: unknown): string | undefined {
+function getAuthErrorDetailsMessage(error: unknown): string | undefined {
   if (
     typeof error === "object" &&
     error !== null &&
@@ -35,11 +35,34 @@ export function getAuthErrorMessage(error: unknown): string | undefined {
   return undefined;
 }
 
+export function getAuthErrorMessage(code: string | undefined) {
+  switch (code) {
+    case "auth/email-already-in-use":
+      return "This email is already registered. Please log in instead.";
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+    case "auth/user-not-found":
+      return "No account found with this email.";
+    case "auth/wrong-password":
+      return "Incorrect password. Please try again.";
+    case "auth/invalid-credential":
+      return "Invalid email or password.";
+    case "auth/weak-password":
+      return "Password should be at least 6 characters.";
+    case "auth/network-request-failed":
+      return "Network error. Check your internet connection.";
+    default:
+      return "Something went wrong. Please try again.";
+  }
+}
+
 export function logAuthError(flow: AuthErrorFlow, error: unknown) {
-  console.warn(`[auth:${flow}]`, {
-    code: getAuthErrorCode(error) ?? "unknown",
-    message: getAuthErrorMessage(error) ?? "unknown",
-  });
+  if (__DEV__) {
+    console.warn(`[auth:${flow}]`, {
+      code: getAuthErrorCode(error) ?? "unknown",
+      message: getAuthErrorDetailsMessage(error) ?? "unknown",
+    });
+  }
 }
 
 export function getGenericAuthErrorMessage(flow: AuthErrorFlow) {

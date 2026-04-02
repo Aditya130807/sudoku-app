@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "../constants/colors";
 import type { ThemeColors } from "../constants/themes";
 import { hexToRgba } from "../utils/colorUtils";
+import { onButtonPress } from "../utils/feedback";
 
 interface CellProps {
   value: number | null;
@@ -16,7 +17,10 @@ interface CellProps {
   isRelated: boolean;
   isMatching: boolean;
   isIncorrect: boolean;
-  isCompleted: boolean;
+  isHintHighlighted: boolean;
+  isHintError: boolean;
+  isLineComplete: boolean;
+  correctColor: string;
   onPress: () => void;
   themeColors?: ThemeColors;
 }
@@ -32,48 +36,80 @@ export default function Cell({
   isRelated,
   isMatching,
   isIncorrect,
-  isCompleted,
+  isHintHighlighted,
+  isHintError,
+  isLineComplete,
+  correctColor,
   onPress,
   themeColors,
 }: CellProps) {
   const textColor = themeColors?.text ?? COLORS.text;
+  const handlePress = useCallback(() => {
+    void onButtonPress();
+    onPress();
+  }, [onPress]);
 
-  const backgroundColor = isIncorrect
-    ? hexToRgba(COLORS.danger, 0.22)
-    : isSelected
-      ? "rgba(255, 200, 100, 0.3)"
-      : isRelated
-        ? "rgba(255, 200, 100, 0.12)"
-        : isMatching
-          ? hexToRgba(textColor, 0.1)
-          : isCompleted
-            ? hexToRgba(textColor, 0.08)
-            : "transparent";
+  const showHintError = isHintError;
+  const showHintHighlight = !showHintError && isHintHighlighted;
+  const showCompleted = !showHintError && !showHintHighlight && isLineComplete;
+  const showSelected =
+    !showHintError && !showHintHighlight && !showCompleted && isSelected;
+  const showSameNumber =
+    !showHintError &&
+    !showHintHighlight &&
+    !showCompleted &&
+    !showSelected &&
+    isMatching;
+
+  let backgroundColor = "transparent";
+  let borderColor = "transparent";
+  let borderWidth = 0;
+
+  if (showHintError) {
+    backgroundColor = hexToRgba(COLORS.danger, 0.2);
+    borderColor = COLORS.danger;
+    borderWidth = 2;
+  } else if (showHintHighlight) {
+    backgroundColor = hexToRgba("#22C55E", 0.12);
+    borderColor = "#22C55E";
+    borderWidth = 2;
+  } else if (showCompleted) {
+    backgroundColor = hexToRgba(correctColor, 0.12);
+    borderColor = correctColor;
+    borderWidth = 2;
+  } else if (isIncorrect) {
+    backgroundColor = hexToRgba(COLORS.danger, 0.22);
+  } else if (showSelected) {
+    backgroundColor = "rgba(255, 200, 100, 0.3)";
+  } else if (isRelated) {
+    backgroundColor = "rgba(255, 200, 100, 0.12)";
+  } else if (showSameNumber) {
+    backgroundColor = hexToRgba(textColor, 0.1);
+  }
+
+  const resolvedCellStyle = {
+    left,
+    top,
+    width: size,
+    height: size,
+    backgroundColor,
+    borderColor,
+    borderWidth,
+    opacity: showCompleted || showHintHighlight ? 0.98 : 1,
+  };
 
   const valueTextColor = !isIncorrect ? textColor : undefined;
   const notesTextColor = hexToRgba(textColor, 0.72);
 
   return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.cell,
-        {
-          left,
-          top,
-          width: size,
-          height: size,
-          backgroundColor,
-        },
-      ]}
-    >
+    <Pressable onPress={handlePress} style={[styles.cell, resolvedCellStyle]}>
       {value !== null ? (
         <View style={styles.contentWrap}>
           <Text
             style={[
               styles.value,
               isPrefilled && styles.prefilledValue,
-              isSelected && styles.selectedValue,
+              showSelected && styles.selectedValue,
               isIncorrect && styles.incorrectValue,
               valueTextColor ? { color: valueTextColor } : undefined,
             ]}
@@ -87,9 +123,9 @@ export default function Cell({
             style={[
               styles.notes,
               notes.length === 0 && styles.emptyValue,
-              isSelected && styles.selectedNotes,
+              showSelected && styles.selectedNotes,
               notesTextColor ? { color: notesTextColor } : undefined,
-              isSelected ? { color: textColor } : undefined,
+              showSelected ? { color: textColor } : undefined,
             ]}
           >
             {[
