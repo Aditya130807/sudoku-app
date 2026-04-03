@@ -1,4 +1,4 @@
-import { Audio } from "expo-av";
+import { createAudioPlayer, type AudioPlayer } from "expo-audio";
 
 const CLICK_SOUND = require("../assets/sounds/click.mp3");
 const SUCCESS_SOUND = require("../assets/sounds/success.mp3");
@@ -6,42 +6,47 @@ const SUCCESS_SOUND = require("../assets/sounds/success.mp3");
 type SoundAsset = number;
 
 async function playSound(asset: SoundAsset) {
-  let sound: Audio.Sound | null = null;
-  let isUnloaded = false;
+  let player: AudioPlayer | null = null;
+  let playbackSubscription: { remove: () => void } | null = null;
+  let isRemoved = false;
 
-  const unloadSound = async () => {
-    if (!sound || isUnloaded) {
+  const removePlayer = () => {
+    if (playbackSubscription) {
+      playbackSubscription.remove();
+      playbackSubscription = null;
+    }
+
+    if (!player || isRemoved) {
       return;
     }
 
-    isUnloaded = true;
-    sound.setOnPlaybackStatusUpdate(null);
+    isRemoved = true;
 
     try {
-      await sound.unloadAsync();
+      player.remove();
     } catch {
-      // Keep caller safe even when unload fails.
+      // Keep caller safe even when cleanup fails.
     }
   };
 
   try {
-    const created = await Audio.Sound.createAsync(asset);
-    sound = created.sound;
-
-    sound.setOnPlaybackStatusUpdate((status) => {
-      if (!status.isLoaded) {
-        void unloadSound();
-        return;
-      }
-
-      if (status.didJustFinish) {
-        void unloadSound();
-      }
+    player = createAudioPlayer(asset, {
+      keepAudioSessionActive: true,
     });
 
-    await sound.playAsync();
+    playbackSubscription = player.addListener(
+      "playbackStatusUpdate",
+      (status) => {
+        if (!status.isLoaded || status.didJustFinish) {
+          removePlayer();
+          return;
+        }
+      },
+    );
+
+    player.play();
   } catch {
-    await unloadSound();
+    removePlayer();
   }
 }
 

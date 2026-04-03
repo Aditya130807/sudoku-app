@@ -38,13 +38,15 @@ const ThemeContext = createContext<AppThemeContextValue | undefined>(undefined);
 
 function areThemeIdListsEqual(
   currentThemeIds: readonly string[],
-  nextThemeIds: readonly string[]
+  nextThemeIds: readonly string[],
 ) {
   if (currentThemeIds.length !== nextThemeIds.length) {
     return false;
   }
 
-  return currentThemeIds.every((themeId, index) => themeId === nextThemeIds[index]);
+  return currentThemeIds.every(
+    (themeId, index) => themeId === nextThemeIds[index],
+  );
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -59,15 +61,21 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     let isDisposed = false;
 
     void (async () => {
-      const storedThemeState = await loadStoredThemeState();
+      try {
+        const storedThemeState = await loadStoredThemeState();
 
-      if (isDisposed) {
-        return;
+        if (isDisposed) {
+          return;
+        }
+
+        setUnlockedThemeIds(storedThemeState.unlockedThemeIds);
+        setActiveThemeId(storedThemeState.activeThemeId);
+      } catch {
+      } finally {
+        if (!isDisposed) {
+          setIsHydrated(true);
+        }
       }
-
-      setUnlockedThemeIds(storedThemeState.unlockedThemeIds);
-      setActiveThemeId(storedThemeState.activeThemeId);
-      setIsHydrated(true);
     })();
 
     return () => {
@@ -107,7 +115,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       return applyTheme(theme.id);
     }
 
-    const nextUnlockedThemeIds = sanitizeThemeIds([...unlockedThemeIds, theme.id]);
+    const nextUnlockedThemeIds = sanitizeThemeIds([
+      ...unlockedThemeIds,
+      theme.id,
+    ]);
     const requiresCoins = theme.price > 0;
 
     if (requiresCoins && !spendCoins(theme.price)) {

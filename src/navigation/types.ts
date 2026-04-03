@@ -6,7 +6,11 @@ export type RootStackParamList = {
   ForgotPassword: undefined;
   LevelMap: undefined;
   AuthChoice: undefined;
-  Game: { levelId: number };
+  Game: {
+    levelId: number;
+    isDailyChallenge?: boolean;
+    challengeType?: "speed" | "noHint" | "mystery";
+  };
   Settings: undefined;
   ThemeStore: undefined;
   DailyChallenges: undefined;

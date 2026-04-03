@@ -1,12 +1,12 @@
 import React, { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 
 import { COLORS } from "../constants/colors";
-import { useCoins } from "../context/CoinContext";
 import type { ThemeColors } from "../constants/themes";
+import { useCoins } from "../context/CoinContext";
 import { hexToRgba } from "../utils/colorUtils";
 import { onButtonPress } from "../utils/feedback";
+import CoinIcon from "./CoinIcon";
 
 interface HeaderAction {
   icon?: ReactNode;
@@ -22,13 +22,7 @@ interface HeaderProps {
   themeColors?: ThemeColors;
 }
 
-const COIN_ICON_COLOR = "#FFD700";
-
-function CoinBalance({
-  themeColors,
-}: {
-  themeColors?: ThemeColors;
-}) {
+function CoinBalance({ themeColors }: { themeColors?: ThemeColors }) {
   const { coins, isHydrated } = useCoins();
   const backgroundColor = themeColors?.grid ?? COLORS.surface;
   const borderColor = themeColors?.text
@@ -46,7 +40,7 @@ function CoinBalance({
         },
       ]}
     >
-      <Ionicons color={COIN_ICON_COLOR} name="diamond" size={16} />
+      <CoinIcon size={16} />
       <Text
         adjustsFontSizeToFit
         numberOfLines={1}
@@ -203,7 +197,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
   },
   coinBalanceText: {
     fontSize: 13,

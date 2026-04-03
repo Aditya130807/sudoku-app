@@ -2,9 +2,32 @@ import React, { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "../constants/colors";
-import type { ThemeColors } from "../constants/themes";
+import type { ThemeColors, ThemeId } from "../constants/themes";
 import { hexToRgba } from "../utils/colorUtils";
 import { onButtonPress } from "../utils/feedback";
+
+const themeTextColors: Record<ThemeId, { fixed: string; user: string }> = {
+  classic: {
+    fixed: "#1A1A1A",
+    user: "#14B8A6",
+  },
+  volcanic: {
+    fixed: "#1A1A1A",
+    user: "#FB923C",
+  },
+  slime: {
+    fixed: "#1A1A1A",
+    user: "#14B8A6",
+  },
+  wood: {
+    fixed: "#170502",
+    user: "#663209",
+  },
+  ice: {
+    fixed: "#000E24",
+    user: "#1C4D8B",
+  },
+};
 
 interface CellProps {
   value: number | null;
@@ -22,6 +45,7 @@ interface CellProps {
   isLineComplete: boolean;
   correctColor: string;
   onPress: () => void;
+  themeId?: ThemeId;
   themeColors?: ThemeColors;
 }
 
@@ -41,13 +65,20 @@ export default function Cell({
   isLineComplete,
   correctColor,
   onPress,
+  themeId,
   themeColors,
 }: CellProps) {
   const textColor = themeColors?.text ?? COLORS.text;
+  const colors = themeTextColors[themeId ?? "classic"];
+  const isFixed = isPrefilled;
   const handlePress = useCallback(() => {
+    if (isFixed) {
+      return;
+    }
+
     void onButtonPress();
     onPress();
-  }, [onPress]);
+  }, [isFixed, onPress]);
 
   const showHintError = isHintError;
   const showHintHighlight = !showHintError && isHintHighlighted;
@@ -87,6 +118,10 @@ export default function Cell({
     backgroundColor = hexToRgba(textColor, 0.1);
   }
 
+  if (backgroundColor === "transparent" && isFixed) {
+    backgroundColor = hexToRgba(textColor, 0.04);
+  }
+
   const resolvedCellStyle = {
     left,
     top,
@@ -98,20 +133,23 @@ export default function Cell({
     opacity: showCompleted || showHintHighlight ? 0.98 : 1,
   };
 
-  const valueTextColor = !isIncorrect ? textColor : undefined;
   const notesTextColor = hexToRgba(textColor, 0.72);
 
   return (
-    <Pressable onPress={handlePress} style={[styles.cell, resolvedCellStyle]}>
+    <Pressable
+      disabled={isFixed}
+      onPress={handlePress}
+      style={[styles.cell, resolvedCellStyle]}
+    >
       {value !== null ? (
         <View style={styles.contentWrap}>
           <Text
             style={[
               styles.value,
-              isPrefilled && styles.prefilledValue,
-              showSelected && styles.selectedValue,
-              isIncorrect && styles.incorrectValue,
-              valueTextColor ? { color: valueTextColor } : undefined,
+              {
+                color: isFixed ? colors.fixed : colors.user,
+                fontWeight: isFixed ? "700" : "500",
+              },
             ]}
           >
             {value}
@@ -160,9 +198,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   value: {
-    color: COLORS.primary,
     fontSize: 20,
-    fontWeight: "800",
     textAlign: "center",
     includeFontPadding: false,
   },
@@ -176,16 +212,6 @@ const styles = StyleSheet.create({
   },
   selectedNotes: {
     color: COLORS.primaryDark,
-  },
-  prefilledValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  selectedValue: {
-    color: COLORS.primaryDark,
-  },
-  incorrectValue: {
-    color: COLORS.danger,
   },
   emptyValue: {
     color: "transparent",

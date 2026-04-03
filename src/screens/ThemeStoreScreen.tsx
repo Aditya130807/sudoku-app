@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Alert, Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import CoinIcon from "../components/CoinIcon";
 import CustomButton from "../components/CustomButton";
 import Header from "../components/Header";
 import { COLORS } from "../constants/colors";
@@ -21,10 +22,6 @@ type ThemeCardState = "locked" | "unlocked" | "active";
 interface FeedbackState {
   tone: FeedbackTone;
   message: string;
-}
-
-function getPriceLabel(price: number) {
-  return price <= 0 ? "FREE" : `${price} coins`;
 }
 
 function getThemeCardState(
@@ -94,13 +91,21 @@ export default function ThemeStoreScreen({ navigation }: Props) {
   };
 
   const handlePurchase = async (theme: ThemeConfig) => {
-    const result = await buyTheme(theme.id);
-    pushFeedback(result.ok ? "success" : "error", result.message);
+    try {
+      const result = await buyTheme(theme.id);
+      pushFeedback(result.ok ? "success" : "error", result.message);
+    } catch {
+      pushFeedback("error", "We couldn't complete that purchase right now.");
+    }
   };
 
   const handleApply = async (theme: ThemeConfig) => {
-    const result = await applyTheme(theme.id);
-    pushFeedback(result.ok ? "success" : "error", result.message);
+    try {
+      const result = await applyTheme(theme.id);
+      pushFeedback(result.ok ? "success" : "error", result.message);
+    } catch {
+      pushFeedback("error", "We couldn't apply that theme right now.");
+    }
   };
 
   const handleThemeAction = (theme: ThemeConfig) => {
@@ -227,11 +232,18 @@ export default function ThemeStoreScreen({ navigation }: Props) {
             >
               Coins
             </Text>
-            <Text
-              style={[styles.summaryValue, { color: activeTheme.colors.text }]}
-            >
-              {isCoinHydrated ? coins : 0}
-            </Text>
+            <View style={styles.coinValueRow}>
+              <CoinIcon size={20} />
+              <Text
+                style={[
+                  styles.summaryValue,
+                  styles.summaryNumber,
+                  { color: activeTheme.colors.text },
+                ]}
+              >
+                {isCoinHydrated ? `${coins}` : "0"}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -365,9 +377,16 @@ export default function ThemeStoreScreen({ navigation }: Props) {
 
                     <View style={styles.priceSection}>
                       <Text style={styles.metaLabel}>Price</Text>
-                      <Text style={styles.priceText}>
-                        {getPriceLabel(theme.price)}
-                      </Text>
+                      {theme.price <= 0 ? (
+                        <Text style={styles.priceText}>FREE</Text>
+                      ) : (
+                        <View style={styles.priceRow}>
+                          <CoinIcon size={16} />
+                          <Text style={styles.priceValueText}>
+                            {theme.price}
+                          </Text>
+                        </View>
+                      )}
                       {showInsufficientState ? (
                         <Text style={styles.insufficientText}>
                           Need {theme.price - coins} more coins
@@ -435,6 +454,14 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "900",
     marginTop: 8,
+  },
+  summaryNumber: {
+    marginTop: 0,
+  },
+  coinValueRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
   },
   summaryCaption: {
     color: COLORS.textMuted,
@@ -593,6 +620,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
     marginTop: 6,
+  },
+  priceRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  priceValueText: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: "800",
   },
   insufficientText: {
     color: COLORS.danger,

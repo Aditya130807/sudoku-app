@@ -150,6 +150,7 @@ export default function SudokuGrid({
           isLineComplete={isLineComplete}
           correctColor={correctColor}
           onPress={() => onPressCell(rowIndex, colIndex)}
+          themeId={themeId}
           themeColors={themeColors}
         />
       );

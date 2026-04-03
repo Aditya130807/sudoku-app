@@ -5,14 +5,18 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Linking,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import CoinIcon from "../components/CoinIcon";
 import CustomButton from "../components/CustomButton";
 import Header from "../components/Header";
 import { COLORS } from "../constants/colors";
@@ -65,10 +69,25 @@ function getDeleteAccountErrorMessage(error: unknown) {
   const errorCode = getAuthErrorCode(error);
 
   if (errorCode === "auth/requires-recent-login") {
-    return "Please sign in again before deleting your account.";
+    return "Please re-login to delete account";
   }
 
-  return "We couldn't delete your account right now. Please try again.";
+  if (errorCode === "account/profile-delete-failed") {
+    return "Deletion failed, try again";
+  }
+
+  if (errorCode === "account/auth-delete-failed") {
+    return "Deletion failed, try again";
+  }
+
+  if (
+    errorCode === "auth/invalid-credential" ||
+    errorCode === "auth/wrong-password"
+  ) {
+    return "Please re-login to delete account";
+  }
+
+  return "Deletion failed, try again";
 }
 
 export default function SettingsScreen({ navigation }: Props) {
@@ -84,6 +103,9 @@ export default function SettingsScreen({ navigation }: Props) {
   const [accountFeedback, setAccountFeedback] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [showDeletePasswordPrompt, setShowDeletePasswordPrompt] =
+    useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
   const isMountedRef = useRef(true);
   const appExtraConfig =
     (Constants.expoConfig?.extra as AppExtraConfig | undefined) ?? {};
@@ -97,23 +119,32 @@ export default function SettingsScreen({ navigation }: Props) {
   }, []);
 
   const openExternalPage = async (url: string, fallbackMessage: string) => {
-    if (!url) {
+    try {
+      if (!url) {
+        setAccountFeedback(fallbackMessage);
+        return;
+      }
+
+      const supported = await Linking.canOpenURL(url);
+
+      if (!supported) {
+        setAccountFeedback(fallbackMessage);
+        return;
+      }
+
+      setAccountFeedback(null);
+      await Linking.openURL(url);
+    } catch {
       setAccountFeedback(fallbackMessage);
-      return;
     }
-
-    const supported = await Linking.canOpenURL(url);
-
-    if (!supported) {
-      setAccountFeedback(fallbackMessage);
-      return;
-    }
-
-    setAccountFeedback(null);
-    await Linking.openURL(url);
   };
 
-  const handleDeleteAccount = async () => {
+  const closeDeletePasswordPrompt = () => {
+    setShowDeletePasswordPrompt(false);
+    setDeletePassword("");
+  };
+
+  const handleDeleteAccount = async (passwordForReauth?: string) => {
     if (!isSignedIn) {
       return;
     }
@@ -122,18 +153,29 @@ export default function SettingsScreen({ navigation }: Props) {
     setIsDeletingAccount(true);
 
     try {
-      await authService.deleteAccount();
+      await authService.deleteAccount(
+        passwordForReauth
+          ? {
+              password: passwordForReauth,
+            }
+          : undefined,
+      );
       await resetThemeState();
       resetCoins();
       resetDailyChallenges();
       gameStore.reset();
       userStore.resetUser();
+      closeDeletePasswordPrompt();
     } catch (error: unknown) {
-      if (__DEV__) {
-        console.warn("[account:delete]", error);
-      }
-
       if (isMountedRef.current) {
+        const errorCode = getAuthErrorCode(error);
+
+        if (errorCode === "auth/requires-recent-login" && !passwordForReauth) {
+          setAccountFeedback("Please re-login to delete account");
+          setShowDeletePasswordPrompt(true);
+          return;
+        }
+
         setAccountFeedback(getDeleteAccountErrorMessage(error));
       }
     } finally {
@@ -141,6 +183,15 @@ export default function SettingsScreen({ navigation }: Props) {
         setIsDeletingAccount(false);
       }
     }
+  };
+
+  const handleConfirmDeleteWithPassword = () => {
+    if (!deletePassword.trim()) {
+      setAccountFeedback("Please re-login to delete account");
+      return;
+    }
+
+    void handleDeleteAccount(deletePassword);
   };
 
   const performSignOut = async () => {
@@ -153,6 +204,7 @@ export default function SettingsScreen({ navigation }: Props) {
 
     try {
       await authService.logout();
+      await resetThemeState();
       resetCoins();
       resetDailyChallenges();
       gameStore.reset();
@@ -165,10 +217,6 @@ export default function SettingsScreen({ navigation }: Props) {
         });
       }
     } catch (error: unknown) {
-      if (__DEV__) {
-        console.warn("[account:logout]", error);
-      }
-
       if (isMountedRef.current) {
         const errorCode = getAuthErrorCode(error);
         const message =
@@ -324,13 +372,16 @@ export default function SettingsScreen({ navigation }: Props) {
               <Text style={styles.themeTitle}>Economy</Text>
               <Text style={styles.themeDescription}>
                 Earn coins by completing daily challenges and watching rewarded
-                ads. Marketplace purchases are coming soon.
+                ads.
               </Text>
             </View>
             <View style={styles.themeBadge}>
-              <Text style={styles.themeBadgeText}>
-                {isCoinHydrated ? `${coins} coins` : "Loading"}
-              </Text>
+              <View style={styles.themeBadgeRow}>
+                <CoinIcon size={14} />
+                <Text style={styles.themeBadgeText}>
+                  {isCoinHydrated ? `${coins}` : "..."}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -341,10 +392,6 @@ export default function SettingsScreen({ navigation }: Props) {
             </Text>
           </View>
 
-          <View style={styles.themeMetaRow}>
-            <Text style={styles.themeMetaLabel}>Marketplace</Text>
-            <Text style={styles.themeMetaValue}>Coming Soon</Text>
-          </View>
           <CustomButton
             label="Open Daily Challenges"
             onPress={handleOpenDailyChallenges}
@@ -431,6 +478,59 @@ export default function SettingsScreen({ navigation }: Props) {
           ) : null}
         </View>
       </ScrollView>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={closeDeletePasswordPrompt}
+        transparent
+        visible={showDeletePasswordPrompt}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              Please re-login to delete account
+            </Text>
+            <Text style={styles.modalDescription}>
+              Enter your password to continue account deletion.
+            </Text>
+
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!isDeletingAccount}
+              onChangeText={setDeletePassword}
+              placeholder="Password"
+              placeholderTextColor={COLORS.textMuted}
+              secureTextEntry
+              style={styles.modalInput}
+              textContentType="password"
+              value={deletePassword}
+            />
+
+            <View style={styles.modalActionsRow}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isDeletingAccount}
+                onPress={closeDeletePasswordPrompt}
+                style={({ pressed }) => [
+                  styles.modalCancelButton,
+                  pressed ? styles.modalCancelPressed : null,
+                ]}
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </Pressable>
+
+              <CustomButton
+                disabled={isDeletingAccount}
+                isLoading={isDeletingAccount}
+                label={isDeletingAccount ? "Deleting..." : "Confirm Deletion"}
+                onPress={handleConfirmDeleteWithPassword}
+                style={styles.modalConfirmButton}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -508,6 +608,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  themeBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   themeBadgeText: {
     color: COLORS.primaryDark,
     fontSize: 12,
@@ -563,5 +667,67 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     marginTop: 12,
+  },
+  modalBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 380,
+    borderRadius: 18,
+    padding: 18,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  modalDescription: {
+    color: COLORS.textMuted,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  modalInput: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surfaceAlt,
+    color: COLORS.text,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  modalActionsRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  modalCancelButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surfaceAlt,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  modalCancelPressed: {
+    opacity: 0.8,
+  },
+  modalCancelButtonText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  modalConfirmButton: {
+    flex: 1,
   },
 });

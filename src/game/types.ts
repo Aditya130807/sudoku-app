@@ -1,5 +1,9 @@
 export type GridSize = 6 | 9;
-export type DifficultyTier = "Beginner" | "Intermediate" | "Advanced" | "Expert";
+export type DifficultyTier =
+  | "Beginner"
+  | "Intermediate"
+  | "Advanced"
+  | "Expert";
 export type CellValue = number | null;
 export type Board = CellValue[][];
 export interface CellState {
@@ -56,6 +60,8 @@ export interface GameSettings {
 
 export interface GameSession {
   levelId: number;
+  isDailyChallenge?: boolean;
+  challengeType?: "speed" | "noHint" | "mystery";
   puzzle: Board;
   solution: Board;
   board: Board;

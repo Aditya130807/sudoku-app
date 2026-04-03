@@ -17,6 +17,13 @@ export interface LoadUserDataResult {
   isFallbackData: boolean;
 }
 
+type UserDataLoadErrorCode = "user-data/remote-load-failed";
+
+type UserDataLoadError = Error & {
+  code: UserDataLoadErrorCode;
+  cause?: unknown;
+};
+
 let fallbackDataUserId: string | null = null;
 
 function markFallbackDataState(userId: string | null, isFallbackData: boolean) {
@@ -37,6 +44,28 @@ function markFallbackDataState(userId: string | null, isFallbackData: boolean) {
 
 function shouldBlockRemoteSync(userId: string): boolean {
   return fallbackDataUserId === userId;
+}
+
+function createRemoteLoadError(cause?: unknown): UserDataLoadError {
+  const error = new Error(
+    "Unable to load your account data right now. Please try again.",
+  ) as UserDataLoadError;
+  error.code = "user-data/remote-load-failed";
+
+  if (cause !== undefined) {
+    error.cause = cause;
+  }
+
+  return error;
+}
+
+export function isRemoteUserDataLoadError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "user-data/remote-load-failed"
+  );
 }
 
 const VALID_LEVEL_STATUSES: ReadonlySet<LevelStatus> = new Set([
@@ -275,7 +304,9 @@ function buildCurrentStatsSnapshot(
 export async function loadUserData(
   userId: string | null,
 ): Promise<LoadUserDataResult> {
-  if (!userId) {
+  const isGuest = !userId;
+
+  if (isGuest) {
     const guestSnapshot = await storageService.loadGuestUserData();
     markFallbackDataState(null, false);
     return {
@@ -301,13 +332,10 @@ export async function loadUserData(
       data: normalizedData,
       isFallbackData: false,
     };
-  } catch {
-    const fallbackSnapshot = await storageService.loadGuestUserData();
+  } catch (error) {
+    // Signed-in sessions must never hydrate from guest/local fallback data.
     markFallbackDataState(userId, true);
-    return {
-      data: sanitizeUserDataSnapshot(fallbackSnapshot),
-      isFallbackData: true,
-    };
+    throw createRemoteLoadError(error);
   }
 }
 

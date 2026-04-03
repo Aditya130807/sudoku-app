@@ -1,11 +1,6 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-// TypeScript resolves the generic auth typings here, but the React Native bundle
-// exports this helper and Metro uses that bundle in Expo.
-// @ts-ignore
-import { getAuth, initializeAuth } from "@firebase/auth";
-
-import { secureAuthPersistence } from "./services/secureAuthPersistence";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCK7xcQwLbtXMgT-VB8DdeABePSloQSczc",
@@ -19,24 +14,5 @@ const firebaseConfig = {
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-function createAuth() {
-  try {
-    return initializeAuth(app, {
-      persistence: secureAuthPersistence,
-    });
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "auth/already-initialized"
-    ) {
-      return getAuth(app);
-    }
-
-    throw error;
-  }
-}
-
-export const auth = createAuth();
+export const auth = getAuth(app);
 export const db = getFirestore(app);

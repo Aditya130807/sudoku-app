@@ -17,6 +17,7 @@ export interface GameState {
   settings: GameSettings;
   progress: Record<number, LevelProgress>;
   activeGame: GameSession | null;
+  isGameStateHydrated: boolean;
   lastPlayedLevelId: number | null;
   coins: number;
   unlockedThemes: string[];
@@ -49,6 +50,7 @@ const initialGameState: GameState = {
   settings: defaultSettings,
   progress: createInitialProgress(),
   activeGame: null,
+  isGameStateHydrated: false,
   lastPlayedLevelId: null,
   coins: 0,
   unlockedThemes: [DEFAULT_THEME_ID],

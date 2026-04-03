@@ -19,6 +19,12 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  playHintSound,
+  playInputSound,
+  playSuccessSound,
+} from "../../utils/soundManager";
+import CoinIcon from "../components/CoinIcon";
 import CustomButton from "../components/CustomButton";
 import GameControls from "../components/GameControls";
 import Header from "../components/Header";
@@ -31,15 +37,16 @@ import { useAppTheme } from "../context/ThemeContext";
 import { getGridConfig } from "../game/difficulty";
 import { calculateStarsAndEfficiency } from "../game/reward";
 import { getTimeGoal } from "../game/timeGoals";
-import { SectionCompletion } from "../game/types";
+import { Board, SectionCompletion } from "../game/types";
 import { RootStackParamList } from "../navigation/types";
 import {
   initializeAds,
   preloadInterstitialAd,
   showInterstitialAd,
 } from "../services/adService";
+import { markCompleted } from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
-import { useGameStore } from "../store/gameStore";
+import { gameStore, useGameStore } from "../store/gameStore";
 import { hexToRgba } from "../utils/colorUtils";
 import { onGameWin } from "../utils/feedback";
 import { formatDuration, useLiveElapsedSeconds } from "../utils/timer";
@@ -56,9 +63,31 @@ const EMPTY_COMPLETION: SectionCompletion = {
 };
 
 type HintStateMap = Record<string, boolean>;
+type MysteryCellMap = Record<string, true>;
+
+const MYSTERY_HIDDEN_CLUE_COUNT = 8;
+const MYSTERY_PREDEFINED_CELLS: [number, number][] = [
+  [0, 0],
+  [0, 4],
+  [0, 8],
+  [4, 0],
+  [4, 4],
+  [4, 8],
+  [8, 0],
+  [8, 4],
+  [8, 8],
+  [2, 2],
+  [2, 6],
+  [6, 2],
+  [6, 6],
+];
 
 function getHintStateKey(row: number, col: number) {
   return `${row}-${col}`;
+}
+
+function getMysteryCellKey(row: number, col: number) {
+  return `${row}:${col}`;
 }
 
 function parseHintStateKey(key: string) {
@@ -71,6 +100,138 @@ function parseHintStateKey(key: string) {
   }
 
   return { row, col };
+}
+
+function parseMysteryCellKey(key: string) {
+  const [rowPart, colPart] = key.split(":");
+  const row = Number(rowPart);
+  const col = Number(colPart);
+
+  if (Number.isNaN(row) || Number.isNaN(col)) {
+    return null;
+  }
+
+  return { row, col };
+}
+
+function isRowSolved(board: Board, solution: Board, rowIndex: number) {
+  return board[rowIndex].every(
+    (value, colIndex) =>
+      value !== null && value === solution[rowIndex][colIndex],
+  );
+}
+
+function isColumnSolved(board: Board, solution: Board, colIndex: number) {
+  return board.every(
+    (row, rowIndex) =>
+      row[colIndex] !== null && row[colIndex] === solution[rowIndex][colIndex],
+  );
+}
+
+function isBoxSolved(
+  board: Board,
+  solution: Board,
+  rowIndex: number,
+  colIndex: number,
+  boxRows: number,
+  boxCols: number,
+) {
+  const rowStart = Math.floor(rowIndex / boxRows) * boxRows;
+  const colStart = Math.floor(colIndex / boxCols) * boxCols;
+
+  for (let row = rowStart; row < rowStart + boxRows; row += 1) {
+    for (let col = colStart; col < colStart + boxCols; col += 1) {
+      if (board[row][col] === null || board[row][col] !== solution[row][col]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function createMysteryHiddenCellMap(puzzle: Board): MysteryCellMap {
+  const hiddenCellMap: MysteryCellMap = {};
+  let hiddenCount = 0;
+
+  const tryAddCell = (row: number, col: number) => {
+    if (hiddenCount >= MYSTERY_HIDDEN_CLUE_COUNT) {
+      return;
+    }
+
+    if (puzzle[row]?.[col] === null) {
+      return;
+    }
+
+    const key = getMysteryCellKey(row, col);
+
+    if (hiddenCellMap[key]) {
+      return;
+    }
+
+    hiddenCellMap[key] = true;
+    hiddenCount += 1;
+  };
+
+  MYSTERY_PREDEFINED_CELLS.forEach(([row, col]) => {
+    tryAddCell(row, col);
+  });
+
+  if (hiddenCount >= MYSTERY_HIDDEN_CLUE_COUNT) {
+    return hiddenCellMap;
+  }
+
+  for (let row = 0; row < puzzle.length; row += 1) {
+    for (let col = 0; col < puzzle[row].length; col += 1) {
+      if ((row + col) % 2 !== 0) {
+        continue;
+      }
+
+      tryAddCell(row, col);
+
+      if (hiddenCount >= MYSTERY_HIDDEN_CLUE_COUNT) {
+        return hiddenCellMap;
+      }
+    }
+  }
+
+  return hiddenCellMap;
+}
+
+function createInitialMysteryRevealedCellMap(
+  board: Board,
+  solution: Board,
+  hiddenCellMap: MysteryCellMap,
+  boxRows: number,
+  boxCols: number,
+): MysteryCellMap {
+  const revealedCellMap: MysteryCellMap = {};
+
+  Object.keys(hiddenCellMap).forEach((key) => {
+    const parsedCell = parseMysteryCellKey(key);
+
+    if (!parsedCell) {
+      return;
+    }
+
+    const shouldReveal =
+      isRowSolved(board, solution, parsedCell.row) ||
+      isColumnSolved(board, solution, parsedCell.col) ||
+      isBoxSolved(
+        board,
+        solution,
+        parsedCell.row,
+        parsedCell.col,
+        boxRows,
+        boxCols,
+      );
+
+    if (shouldReveal) {
+      revealedCellMap[key] = true;
+    }
+  });
+
+  return revealedCellMap;
 }
 
 function toHintStateKeyFromValidatorKey(key: string) {
@@ -105,6 +266,11 @@ function getSafeLevelDefinition(levelId: number) {
 
 export default function GameScreen({ navigation, route }: Props) {
   const { levelId } = route.params;
+  const isDailyChallenge = route.params?.isDailyChallenge === true;
+  const dailyChallengeType = route.params?.challengeType;
+  const isMysteryDailyChallenge =
+    isDailyChallenge && dailyChallengeType === "mystery";
+  const disableHints = isDailyChallenge && dailyChallengeType === "noHint";
   const { width: windowWidth } = useWindowDimensions();
   const boardSize = Math.min(windowWidth - 32, 360);
   const framedBoardSize = boardSize + FRAME_THICKNESS * 2;
@@ -116,6 +282,7 @@ export default function GameScreen({ navigation, route }: Props) {
     registerGameWon,
   } = useDailyChallenges();
   const { activeTheme } = useAppTheme();
+  const activeThemeIdRef = useRef(activeTheme.id);
   const frameImage = activeTheme.frameImage;
   const activeGame = useGameStore((state) => state.activeGame);
   const settings = useGameStore((state) => state.settings);
@@ -136,8 +303,14 @@ export default function GameScreen({ navigation, route }: Props) {
   const [completionRewardMessages, setCompletionRewardMessages] = useState<
     string[]
   >([]);
+  const [mysteryHiddenCellMap, setMysteryHiddenCellMap] =
+    useState<MysteryCellMap>({});
+  const [mysteryRevealedCellMap, setMysteryRevealedCellMap] =
+    useState<MysteryCellMap>({});
+  const lastDailyCompletionTrackingKeyRef = useRef<string | null>(null);
   const lastInterstitialCompletionKeyRef = useRef<string | null>(null);
   const lastWinFeedbackKeyRef = useRef<string | null>(null);
+  const startTimeRef = useRef(Date.now());
   const completionAnimation = useRef(new Animated.Value(0)).current;
   const hintHighlightTimeoutsRef = useRef<
     Map<string, ReturnType<typeof setTimeout>>
@@ -191,6 +364,107 @@ export default function GameScreen({ navigation, route }: Props) {
       ? (currentSession?.completedAt ?? null)
       : null;
 
+  const checkMysteryReveal = useCallback(
+    (row: number, col: number, board: Board, solution: Board) => {
+      if (!isMysteryDailyChallenge || !gridConfig) {
+        return;
+      }
+
+      const rowSolved = isRowSolved(board, solution, row);
+      const colSolved = isColumnSolved(board, solution, col);
+      const boxSolved = isBoxSolved(
+        board,
+        solution,
+        row,
+        col,
+        gridConfig.boxRows,
+        gridConfig.boxCols,
+      );
+
+      if (!rowSolved && !colSolved && !boxSolved) {
+        return;
+      }
+
+      const boxRow = Math.floor(row / gridConfig.boxRows);
+      const boxCol = Math.floor(col / gridConfig.boxCols);
+      const keysToReveal: MysteryCellMap = {};
+
+      Object.keys(mysteryHiddenCellMap).forEach((key) => {
+        const parsedCell = parseMysteryCellKey(key);
+
+        if (!parsedCell) {
+          return;
+        }
+
+        const inRow = parsedCell.row === row;
+        const inColumn = parsedCell.col === col;
+        const inBox =
+          Math.floor(parsedCell.row / gridConfig.boxRows) === boxRow &&
+          Math.floor(parsedCell.col / gridConfig.boxCols) === boxCol;
+
+        if (
+          (rowSolved && inRow) ||
+          (colSolved && inColumn) ||
+          (boxSolved && inBox)
+        ) {
+          keysToReveal[key] = true;
+        }
+      });
+
+      if (!Object.keys(keysToReveal).length) {
+        return;
+      }
+
+      setMysteryRevealedCellMap((previousMap) => {
+        const nextMap: MysteryCellMap = { ...previousMap };
+        let hasChanged = false;
+
+        Object.keys(keysToReveal).forEach((key) => {
+          if (!nextMap[key]) {
+            nextMap[key] = true;
+            hasChanged = true;
+          }
+        });
+
+        return hasChanged ? nextMap : previousMap;
+      });
+    },
+    [gridConfig, isMysteryDailyChallenge, mysteryHiddenCellMap],
+  );
+
+  const boardForGrid = useMemo(() => {
+    if (!currentSession || !isMysteryDailyChallenge) {
+      return currentSession?.board ?? null;
+    }
+
+    const maskedBoard = currentSession.board.map((row) => [...row]) as (
+      | number
+      | null
+      | "?"
+    )[][];
+
+    Object.keys(mysteryHiddenCellMap).forEach((key) => {
+      if (mysteryRevealedCellMap[key]) {
+        return;
+      }
+
+      const parsedCell = parseMysteryCellKey(key);
+
+      if (!parsedCell) {
+        return;
+      }
+
+      maskedBoard[parsedCell.row][parsedCell.col] = "?";
+    });
+
+    return maskedBoard as unknown as Board;
+  }, [
+    currentSession,
+    isMysteryDailyChallenge,
+    mysteryHiddenCellMap,
+    mysteryRevealedCellMap,
+  ]);
+
   useEffect(() => {
     if (!level || !gridConfig) {
       setLoadError("This level is unavailable right now.");
@@ -201,7 +475,12 @@ export default function GameScreen({ navigation, route }: Props) {
     setLoadError(null);
 
     try {
-      const result = gameService.startLevel(levelId);
+      const result = gameService.startLevel(levelId, {
+        allowLocked: isDailyChallenge,
+        skipProgressTracking: isDailyChallenge,
+        isDailyChallenge,
+        challengeType: dailyChallengeType,
+      });
 
       if (!result.ok) {
         setLoadError(result.message ?? "Unable to start this level.");
@@ -211,7 +490,44 @@ export default function GameScreen({ navigation, route }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [gridConfig, level, levelId]);
+  }, [dailyChallengeType, gridConfig, isDailyChallenge, level, levelId]);
+
+  useEffect(() => {
+    if (!sessionStartKey) {
+      return;
+    }
+
+    startTimeRef.current = Date.now();
+  }, [sessionStartKey]);
+
+  useEffect(() => {
+    if (!isMysteryDailyChallenge || !currentSession || !gridConfig) {
+      setMysteryHiddenCellMap({});
+      setMysteryRevealedCellMap({});
+      return;
+    }
+
+    const hiddenCellMap = createMysteryHiddenCellMap(currentSession.puzzle);
+    setMysteryHiddenCellMap(hiddenCellMap);
+    setMysteryRevealedCellMap(
+      createInitialMysteryRevealedCellMap(
+        currentSession.board,
+        currentSession.solution,
+        hiddenCellMap,
+        gridConfig.boxRows,
+        gridConfig.boxCols,
+      ),
+    );
+  }, [
+    currentSession?.startedAt,
+    currentSession,
+    gridConfig,
+    isMysteryDailyChallenge,
+  ]);
+
+  useEffect(() => {
+    activeThemeIdRef.current = activeTheme.id;
+  }, [activeTheme.id]);
 
   useEffect(() => {
     if (!notice) {
@@ -229,8 +545,10 @@ export default function GameScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     void (async () => {
-      await initializeAds();
-      await preloadInterstitialAd();
+      try {
+        await initializeAds();
+        await preloadInterstitialAd();
+      } catch {}
     })();
   }, []);
 
@@ -316,6 +634,7 @@ export default function GameScreen({ navigation, route }: Props) {
 
     lastWinFeedbackKeyRef.current = sessionCompletionKey;
     void onGameWin();
+    playSuccessSound();
   }, [sessionCompletionKey]);
 
   useEffect(() => {
@@ -356,6 +675,66 @@ export default function GameScreen({ navigation, route }: Props) {
     claimWinRewards,
     isDailyChallengeHydrated,
     levelId,
+    sessionCompletionKey,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isDailyChallengeHydrated ||
+      !isDailyChallenge ||
+      !dailyChallengeType ||
+      !sessionCompletionKey ||
+      !currentSession ||
+      currentSession.status !== "completed"
+    ) {
+      return;
+    }
+
+    if (lastDailyCompletionTrackingKeyRef.current === sessionCompletionKey) {
+      return;
+    }
+
+    lastDailyCompletionTrackingKeyRef.current = sessionCompletionKey;
+
+    void (async () => {
+      try {
+        const timeTakenSeconds =
+          currentSession.elapsedSeconds > 0
+            ? currentSession.elapsedSeconds
+            : (Date.now() - startTimeRef.current) / 1000;
+        const maxSpeedSeconds = (level?.targetTimeSeconds ?? 0) - 120;
+
+        if (dailyChallengeType === "speed") {
+          if (timeTakenSeconds <= maxSpeedSeconds) {
+            await markCompleted("speed");
+          } else {
+            setNotice(
+              `Complete in ${formatDuration(maxSpeedSeconds)} or less to earn reward`,
+            );
+          }
+          return;
+        }
+
+        if (dailyChallengeType === "noHint") {
+          if (currentSession.hintsUsed === 0) {
+            await markCompleted("noHint");
+          }
+          return;
+        }
+
+        if (dailyChallengeType === "mystery") {
+          await markCompleted("mystery");
+        }
+      } catch {
+        // Keep game completion stable if daily completion tracking fails.
+      }
+    })();
+  }, [
+    currentSession,
+    dailyChallengeType,
+    isDailyChallenge,
+    isDailyChallengeHydrated,
+    level?.targetTimeSeconds,
     sessionCompletionKey,
   ]);
 
@@ -419,12 +798,45 @@ export default function GameScreen({ navigation, route }: Props) {
   };
 
   const handleNumberPress = (value: number) => {
+    const selectedCellBeforeInput = currentSession?.selectedCell ?? null;
+    const shouldCheckMysteryReveal =
+      isMysteryDailyChallenge && !isNotesMode && !!selectedCellBeforeInput;
+
     try {
       const result = gameService.inputValue(value, { asNote: isNotesMode });
 
       if (!result.ok) {
         pushNotice(result.message ?? "Unable to enter that value.");
         return;
+      }
+
+      void playInputSound(activeThemeIdRef.current);
+
+      if (shouldCheckMysteryReveal && selectedCellBeforeInput) {
+        const latestSession = gameStore.getState().activeGame;
+
+        if (
+          latestSession &&
+          latestSession.levelId === levelId &&
+          latestSession.status === "playing"
+        ) {
+          const row = selectedCellBeforeInput.row;
+          const col = selectedCellBeforeInput.col;
+          const latestCellValue = latestSession.board[row]?.[col];
+          const solutionCellValue = latestSession.solution[row]?.[col] ?? null;
+
+          if (
+            latestCellValue !== null &&
+            latestCellValue === solutionCellValue
+          ) {
+            checkMysteryReveal(
+              row,
+              col,
+              latestSession.board,
+              latestSession.solution,
+            );
+          }
+        }
       }
 
       setRevealIncorrectValues(false);
@@ -451,6 +863,13 @@ export default function GameScreen({ navigation, route }: Props) {
   };
 
   const handleHint = () => {
+    if (disableHints) {
+      pushNotice("Hints are disabled in the No Hint challenge.");
+      return;
+    }
+
+    playHintSound();
+
     if (!currentSession) {
       pushNotice("Start a level to use hints.");
       return;
@@ -594,7 +1013,7 @@ export default function GameScreen({ navigation, route }: Props) {
     <SudokuGrid
       boardSize={boardSize}
       size={level.size}
-      board={currentSession.board}
+      board={boardForGrid ?? currentSession.board}
       solution={currentSession.solution}
       cellStates={currentSession.cellStates}
       puzzle={currentSession.puzzle}
@@ -620,7 +1039,7 @@ export default function GameScreen({ navigation, route }: Props) {
         style={styles.scrollView}
       >
         <Header
-          title={`Level ${level.id}`}
+          title={isDailyChallenge ? "Daily Challenge" : `Level ${level.id}`}
           subtitle={`${level.title} | ${level.tier} | ${level.size}x${level.size}`}
           themeColors={themeColors}
           leftAction={{
@@ -781,6 +1200,7 @@ export default function GameScreen({ navigation, route }: Props) {
 
             {completionRewardCoins > 0 ? (
               <View style={styles.modalRewardBadge}>
+                <CoinIcon size={16} />
                 <Text style={styles.modalRewardBadgeText}>
                   Daily reward: +{completionRewardCoins} coins
                 </Text>
@@ -1042,6 +1462,8 @@ function createGameScreenStyles(colors: ThemeColors) {
       paddingVertical: 10,
       borderWidth: 1,
       borderColor: hexToRgba(colors.text, 0.14),
+      flexDirection: "row",
+      alignItems: "center",
     },
     modalRewardBadgeText: {
       color: colors.text,

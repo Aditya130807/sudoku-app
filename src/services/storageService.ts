@@ -342,6 +342,7 @@ function parseGuestStatsSnapshot(rawValue: string | null): GuestStatsSnapshot {
 export const storageService = {
   async clearAllLocalData(): Promise<void> {
     await AsyncStorage.multiRemove([
+      HAS_ENTERED_APP_STORAGE_KEY,
       GUEST_ID_STORAGE_KEY,
       GUEST_PROGRESS_STORAGE_KEY,
       GUEST_STATS_STORAGE_KEY,

@@ -5,7 +5,6 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Header from "../components/Header";
 import LevelCard from "../components/LevelCard";
-// import LevelNode, { LevelNodeState } from "../components/LevelNode";
 import { COLORS } from "../constants/colors";
 import { LEVELS, TOTAL_LEVELS } from "../constants/levels";
 import { useAppTheme } from "../context/ThemeContext";
@@ -13,7 +12,6 @@ import { RootStackParamList } from "../navigation/types";
 import { gameService } from "../services/gameService";
 import { useGameStore } from "../store/gameStore";
 import { hexToRgba } from "../utils/colorUtils";
-// import { LevelProgress } from "../game/types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LevelMap">;
 
@@ -157,17 +155,6 @@ export default function LevelMapScreen({ navigation }: Props) {
   );
 }
 
-// function getLevelNodeState(
-//   levelId: number,
-//   entry: LevelProgress | undefined,
-//   currentLevelId: number
-// ): LevelNodeState {
-//   if (entry?.status === "completed") return "completed";
-//   if (levelId === currentLevelId) return "current";
-//   if (entry?.status === "locked") return "locked";
-//   return "available";
-// }
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -195,11 +182,4 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 6,
   },
-  // mapWrap: {
-  //   marginTop: 8,
-  //   alignItems: "center",
-  // },
-  // nodeWrapper: {
-  //   marginVertical: 6,
-  // },
 });
