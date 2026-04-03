@@ -1,6 +1,6 @@
 import type { ImageSourcePropType } from "react-native";
 
-export type ThemeId = "classic" | "wood" | "slime" | "fire" | "ice";
+export type ThemeId = "classic" | "wood" | "slime" | "volcanic" | "ice";
 
 export interface ThemeColors {
   grid: string;
@@ -29,6 +29,7 @@ export const DEFAULT_THEME_ID: ThemeId = "classic";
 
 const LEGACY_THEME_ID_ALIASES: Record<string, ThemeId> = {
   default: DEFAULT_THEME_ID,
+  fire: "volcanic",
 };
 
 export const THEME_LIST: ThemeConfig[] = [
@@ -47,12 +48,12 @@ export const THEME_LIST: ThemeConfig[] = [
     },
   },
   {
-    id: "fire",
-    name: "Fire",
-    price: 149,
-    previewImage: require("../../assets/themes/fire.png"),
-    gridImage: require("../../assets/themes/fire-grid.png"),
-    frameImage: require("../../assets/themes/fire-frame.png"),
+    id: "volcanic",
+    name: "Volcanic Core",
+    price: 200,
+    previewImage: require("../../assets/themes/volcanic.png"),
+    gridImage: require("../../assets/themes/volcanic-grid.png"),
+    frameImage: require("../../assets/themes/volcanic-frame.png"),
     colors: {
       grid: "#FFE1C4",
       background: "#ffffff",
@@ -67,12 +68,6 @@ export const THEME_LIST: ThemeConfig[] = [
     previewImage: require("../../assets/themes/slime.png"),
     gridImage: require("../../assets/themes/slime-grid.png"),
     frameImage: require("../../assets/themes/slime-frame.png"),
-    // gridViewport: {
-    //   left: 0.1,
-    //   top: 0.161,
-    //   width: 0.3775,
-    //   height: 0.4899,
-    // },
     colors: {
       grid: "#D4FFC7",
       background: "#EEFFE8",
@@ -87,12 +82,6 @@ export const THEME_LIST: ThemeConfig[] = [
     previewImage: require("../../assets/themes/wood.png"),
     gridImage: require("../../assets/themes/wooden-grid.png"),
     frameImage: require("../../assets/themes/wood-frame.png"),
-    // gridViewport: {
-    //   left: 0.0711,
-    //   top: 0.0606,
-    //   width: 0.8744,
-    //   height: 0.8787,
-    // },
     colors: {
       grid: "#F3DEC4",
       background: "#FAF0E2",
@@ -107,12 +96,6 @@ export const THEME_LIST: ThemeConfig[] = [
     previewImage: require("../../assets/themes/ice.png"),
     gridImage: require("../../assets/themes/ice-grid.png"),
     frameImage: require("../../assets/themes/ice-frame.png"),
-    // gridViewport: {
-    //   left: 0.0791,
-    //   top: 0.1555,
-    //   width: 0.4949,
-    //   height: 0.6855,
-    // },
     colors: {
       grid: "#D8F0FF",
       background: "#EDF9FF",

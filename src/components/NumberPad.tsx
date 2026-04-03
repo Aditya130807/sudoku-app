@@ -4,7 +4,6 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../constants/colors";
 import type { ThemeColors } from "../constants/themes";
 import { hexToRgba } from "../utils/colorUtils";
-import { onButtonPress } from "../utils/feedback";
 
 interface NumberPadProps {
   symbols: number[];
@@ -29,7 +28,6 @@ export default function NumberPad({
   const mutedTextColor = hexToRgba(textColor, 0.62);
   const handleValuePress = useCallback(
     (value: number) => {
-      void onButtonPress();
       onPressValue(value);
     },
     [onPressValue],
@@ -73,7 +71,9 @@ export default function NumberPad({
               style={[
                 styles.remaining,
                 {
-                  color: isSelected ? hexToRgba(backgroundColor, 0.74) : mutedTextColor,
+                  color: isSelected
+                    ? hexToRgba(backgroundColor, 0.74)
+                    : mutedTextColor,
                 },
               ]}
             >

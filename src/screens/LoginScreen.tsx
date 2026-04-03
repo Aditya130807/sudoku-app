@@ -1,14 +1,12 @@
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
-// import { Ionicons } from "@expo/vector-icons";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
 import { COLORS } from "../constants/colors";
 import { DEFAULT_THEME_ID, getThemeConfig } from "../constants/themes";
 import { RootStackParamList } from "../navigation/types";
-// import { authService } from "../services/authService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Welcome">;
 
@@ -23,10 +21,7 @@ export default function LoginScreen({ navigation }: Props) {
   return (
     <SafeAreaView
       edges={["top", "bottom"]}
-      style={[
-        styles.safeArea,
-        { backgroundColor: fixedAuthTheme.background },
-      ]}
+      style={[styles.safeArea, { backgroundColor: fixedAuthTheme.background }]}
     >
       <View style={styles.container}>
         <View style={styles.heroCard}>

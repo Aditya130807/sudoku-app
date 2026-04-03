@@ -1,8 +1,8 @@
 import { lightTap, success } from "./haptics";
-import { playClickSound, playSuccessSound } from "./sound";
+import { playClickSound } from "./sound";
 
-async function runFeedback(effects: (() => Promise<void>)[]) {
-  await Promise.allSettled(effects.map((effect) => effect()));
+async function runFeedback(effects: Array<() => Promise<void> | void>) {
+  await Promise.allSettled(effects.map((effect) => Promise.resolve(effect())));
 }
 
 export function onButtonPress() {
@@ -10,5 +10,5 @@ export function onButtonPress() {
 }
 
 export function onGameWin() {
-  return runFeedback([success, playSuccessSound]);
+  return runFeedback([success]);
 }

@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { playLoginSound } from "../../utils/soundManager";
 import CustomButton from "../components/CustomButton";
 import { COLORS } from "../constants/colors";
 import { DEFAULT_THEME_ID, getThemeConfig } from "../constants/themes";
@@ -22,7 +23,6 @@ import { RootStackParamList } from "../navigation/types";
 import { authService } from "../services/authService";
 import { getAuthErrorMessage, logAuthError } from "../utils/authErrors";
 import { onButtonPress } from "../utils/feedback";
-import { playSuccessSound } from "../utils/sound";
 const fixedAuthTheme = getThemeConfig(DEFAULT_THEME_ID).colors;
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuthChoice">;
@@ -37,6 +37,7 @@ export default function AuthChoiceScreen({ navigation }: Props) {
   const [isPasswordFocused, setIsPasswordFocused] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isLoginLoading, setIsLoginLoading] = useState(false);
+  const [showGuestModal, setShowGuestModal] = useState(false);
 
   const validateCredentials = () => {
     const trimmedEmail = email.trim();
@@ -59,7 +60,7 @@ export default function AuthChoiceScreen({ navigation }: Props) {
     return !nextEmailError && !nextPasswordError;
   };
 
-  const handleLogin = async () => {
+  const proceedToLogin = async () => {
     if (isLoginLoading) {
       return;
     }
@@ -72,10 +73,8 @@ export default function AuthChoiceScreen({ navigation }: Props) {
 
     try {
       await authService.login(email.trim(), password);
-      await Promise.allSettled([
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
-        playSuccessSound(),
-      ]);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      playLoginSound();
       navigation.reset({
         index: 0,
         routes: [{ name: "Home" }],
@@ -89,9 +88,33 @@ export default function AuthChoiceScreen({ navigation }: Props) {
     }
   };
 
+  const handleLogin = () => {
+    void proceedToLogin();
+  };
+
   const handleCreateAccount = () => {
     // Navigate to the dedicated signup form screen.
     navigation.navigate("Signup");
+  };
+
+  const continueAsGuest = async () => {
+    void onButtonPress();
+
+    try {
+      await authService.continueAsGuest();
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "Home" }],
+      });
+    } catch {
+      setFormError(
+        "We couldn't start a guest session right now. Please try again.",
+      );
+    }
+  };
+
+  const handleGuestPress = () => {
+    setShowGuestModal(true);
   };
 
   return (
@@ -171,10 +194,18 @@ export default function AuthChoiceScreen({ navigation }: Props) {
                 ]}
               >
                 <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   placeholder="Password"
                   placeholderTextColor="#cecece"
                   secureTextEntry={!isPasswordVisible}
-                  style={styles.passwordInput}
+                  style={[
+                    styles.passwordInput,
+                    {
+                      color: fixedAuthTheme.text,
+                      backgroundColor: fixedAuthTheme.grid,
+                    },
+                  ]}
                   value={password}
                   onFocus={() => setIsPasswordFocused(true)}
                   onBlur={() => setIsPasswordFocused(false)}
@@ -239,14 +270,7 @@ export default function AuthChoiceScreen({ navigation }: Props) {
           <View style={styles.guestContainer}>
             <Pressable
               accessibilityRole="button"
-              onPress={async () => {
-                void onButtonPress();
-                await authService.continueAsGuest();
-                navigation.reset({
-                  index: 0,
-                  routes: [{ name: "Home" }],
-                });
-              }}
+              onPress={handleGuestPress}
               style={({ pressed }) => [
                 styles.guestButton,
                 pressed ? styles.guestButtonPressed : null,
@@ -254,9 +278,44 @@ export default function AuthChoiceScreen({ navigation }: Props) {
             >
               <Text style={styles.guestText}>Continue as Guest</Text>
             </Pressable>
+            <Text style={styles.helperText}>
+              Guest progress is temporary and will reset on login
+            </Text>
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {showGuestModal ? (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>Continue as Guest?</Text>
+
+            <Text style={styles.modalText}>
+              Your progress will not be saved permanently. It will be lost when
+              you log in.
+            </Text>
+
+            <View style={styles.modalButtons}>
+              <Pressable
+                onPress={() => setShowGuestModal(false)}
+                style={styles.cancelButton}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setShowGuestModal(false);
+                  void continueAsGuest();
+                }}
+                style={styles.confirmButton}
+              >
+                <Text style={styles.confirmButtonText}>Continue</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -424,6 +483,63 @@ const styles = StyleSheet.create({
   guestText: {
     textAlign: "center",
     color: COLORS.primary,
+    fontWeight: "700",
+  },
+  helperText: {
+    textAlign: "center",
+    color: COLORS.textMuted,
+    fontSize: 12,
+    marginTop: 6,
+  },
+  modalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  modalContainer: {
+    width: "80%",
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 10,
+    color: COLORS.text,
+  },
+  modalText: {
+    fontSize: 14,
+    marginBottom: 20,
+    color: COLORS.text,
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  cancelButton: {
+    padding: 10,
+    borderRadius: 8,
+  },
+  cancelButtonText: {
+    color: COLORS.text,
+    fontWeight: "600",
+  },
+  confirmButton: {
+    backgroundColor: "#3B82F6",
+    padding: 10,
+    borderRadius: 8,
+  },
+  confirmButtonText: {
+    color: "white",
     fontWeight: "700",
   },
 });

@@ -56,14 +56,20 @@ export default function AppNavigator() {
     let isDisposed = false;
 
     void (async () => {
-      const hasEntered = await storageService.hasEnteredApp();
+      try {
+        const hasEntered = await storageService.hasEnteredApp();
 
-      if (isDisposed) {
-        return;
+        if (isDisposed) {
+          return;
+        }
+
+        setHasEnteredApp(hasEntered);
+      } catch {
+      } finally {
+        if (!isDisposed) {
+          setIsEntryStateHydrated(true);
+        }
       }
-
-      setHasEnteredApp(hasEntered);
-      setIsEntryStateHydrated(true);
     })();
 
     return () => {

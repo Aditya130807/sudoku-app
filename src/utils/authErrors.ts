@@ -57,12 +57,8 @@ export function getAuthErrorMessage(code: string | undefined) {
 }
 
 export function logAuthError(flow: AuthErrorFlow, error: unknown) {
-  if (__DEV__) {
-    console.warn(`[auth:${flow}]`, {
-      code: getAuthErrorCode(error) ?? "unknown",
-      message: getAuthErrorDetailsMessage(error) ?? "unknown",
-    });
-  }
+  void flow;
+  void error;
 }
 
 export function getGenericAuthErrorMessage(flow: AuthErrorFlow) {

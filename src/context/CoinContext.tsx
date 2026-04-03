@@ -1,4 +1,3 @@
-import { onAuthStateChanged } from "firebase/auth";
 import React, {
   createContext,
   useContext,
@@ -8,11 +7,8 @@ import React, {
   useState,
 } from "react";
 
-import { auth } from "../firebase";
-import {
-  loadUserData,
-  persistCoinsForCurrentUser,
-} from "../services/userDataService";
+import { persistCoinsForCurrentUser } from "../services/userDataService";
+import { useAuthState } from "./AuthStateContext";
 
 interface CoinContextValue {
   coins: number;
@@ -33,41 +29,27 @@ function normalizeCoinAmount(amount: number): number {
 }
 
 export function CoinProvider({ children }: { children: React.ReactNode }) {
+  const { authSyncVersion, latestUserData } = useAuthState();
   const [coins, setCoins] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const coinsRef = useRef(0);
-  const syncCounterRef = useRef(0);
   const skipNextPersistRef = useRef(false);
 
   useEffect(() => {
-    let isDisposed = false;
+    skipNextPersistRef.current = true;
 
-    const syncFromAuthState = async (userId: string | null) => {
-      const syncId = syncCounterRef.current + 1;
-      syncCounterRef.current = syncId;
-      const loadResult = await loadUserData(userId);
-
-      if (syncCounterRef.current !== syncId || isDisposed) {
-        return;
-      }
-
-      skipNextPersistRef.current = true;
-      coinsRef.current = loadResult.data.coins;
-      setCoins(loadResult.data.coins);
+    if (latestUserData) {
+      coinsRef.current = latestUserData.coins;
+      setCoins(latestUserData.coins);
       setIsHydrated(true);
-    };
+      return;
+    }
 
-    void syncFromAuthState(auth.currentUser?.uid ?? null);
-
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      void syncFromAuthState(user?.uid ?? null);
-    });
-
-    return () => {
-      isDisposed = true;
-      unsubscribe();
-    };
-  }, []);
+    // Keep startup resilient when auth sync has no remote snapshot yet.
+    coinsRef.current = 0;
+    setCoins(0);
+    setIsHydrated(true);
+  }, [authSyncVersion, latestUserData]);
 
   useEffect(() => {
     if (!isHydrated) {

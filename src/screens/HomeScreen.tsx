@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
+  NativeModules,
   Platform,
   Pressable,
   ScrollView,
@@ -10,9 +12,9 @@ import {
   Text,
   View,
 } from "react-native";
-import { BannerAd, BannerAdSize } from "react-native-google-mobile-ads";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import CoinIcon from "../components/CoinIcon";
 import CustomButton from "../components/CustomButton";
 import Header from "../components/Header";
 import { COLORS } from "../constants/colors";
@@ -25,8 +27,11 @@ import {
   bannerAdsEnabled,
   bannerAdUnitId,
   initializeAds,
+  isRewardedLoaded,
+  preloadRewardedAd,
   rewardedAdsEnabled,
   showRewardedAd,
+  subscribeRewardedAdState,
 } from "../services/adService";
 import { DAILY_CHALLENGE_UNLOCK_LEVEL } from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
@@ -40,12 +45,31 @@ import {
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 const BONUS_REWARDED_AD_COINS = 20;
 
+let BannerAdComponent: any = null;
+let bannerAdaptiveSize: any = null;
+
+if (NativeModules.RNGoogleMobileAdsModule) {
+  try {
+    const adsModule =
+      require("react-native-google-mobile-ads") as typeof import("react-native-google-mobile-ads");
+    BannerAdComponent = adsModule.BannerAd;
+    bannerAdaptiveSize = adsModule.BannerAdSize.ANCHORED_ADAPTIVE_BANNER;
+  } catch {
+    BannerAdComponent = null;
+    bannerAdaptiveSize = null;
+  }
+}
+
 export default function HomeScreen({ navigation }: Props) {
+  const isFocused = useIsFocused();
   const { activeTheme, unlockedThemeIds } = useAppTheme();
   const { addCoins, coins, isHydrated: isCoinHydrated } = useCoins();
   const { challenges, streakCount } = useDailyChallenges();
   const progress = useGameStore((state) => state.progress);
   const activeGame = useGameStore((state) => state.activeGame);
+  const isGameStateHydrated = useGameStore(
+    (state) => state.isGameStateHydrated,
+  );
   const user = useUserStore((state) => state);
   const completedLevels = Object.values(progress).filter(
     (entry) => entry.status === "completed",
@@ -72,14 +96,59 @@ export default function HomeScreen({ navigation }: Props) {
   const encourageLogin = shouldEncourageLogin(user);
   const isGuest = user.mode === "guest" || !user.uid;
   const [isRewardAdLoading, setIsRewardAdLoading] = useState(false);
+  const [isRewardedAdReady, setIsRewardedAdReady] = useState(isRewardedLoaded);
   const [rewardNotice, setRewardNotice] = useState<string | null>(null);
+  const hasResumablePuzzle =
+    isGameStateHydrated && activeGame?.status === "playing";
 
   useEffect(() => {
-    void initializeAds();
+    return subscribeRewardedAdState(setIsRewardedAdReady);
   }, []);
 
+  useEffect(() => {
+    if (!isFocused || !rewardedAdsEnabled || isRewardedAdReady) {
+      return;
+    }
+
+    let isDisposed = false;
+
+    const loadRewardedWhenFocused = async () => {
+      if (isDisposed) {
+        return;
+      }
+
+      try {
+        await initializeAds();
+
+        if (isDisposed) {
+          return;
+        }
+
+        await preloadRewardedAd();
+      } catch {}
+    };
+
+    void loadRewardedWhenFocused();
+
+    const retryTimer = setTimeout(() => {
+      if (!isDisposed) {
+        void loadRewardedWhenFocused();
+      }
+    }, 2000);
+
+    return () => {
+      isDisposed = true;
+      clearTimeout(retryTimer);
+    };
+  }, [isFocused, isRewardedAdReady]);
+
   const handleWatchRewardedAd = async () => {
-    if (!isCoinHydrated || isRewardAdLoading) {
+    if (
+      !isFocused ||
+      !isCoinHydrated ||
+      isRewardAdLoading ||
+      !isRewardedAdReady
+    ) {
       return;
     }
 
@@ -87,6 +156,14 @@ export default function HomeScreen({ navigation }: Props) {
     setRewardNotice(null);
 
     try {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 300);
+      });
+
+      if (!isFocused) {
+        return;
+      }
+
       const didEarnReward = await showRewardedAd();
 
       if (didEarnReward) {
@@ -123,6 +200,27 @@ export default function HomeScreen({ navigation }: Props) {
     }
 
     navigation.navigate("DailyChallenges");
+  };
+
+  const handleResumePuzzle = () => {
+    if (!activeGame || activeGame.status !== "playing") {
+      Alert.alert("No puzzle to resume");
+      return;
+    }
+
+    navigation.navigate("Game", {
+      levelId: activeGame.levelId,
+    });
+  };
+
+  const handleStartNextLevel = () => {
+    if (!isGameStateHydrated) {
+      return;
+    }
+
+    navigation.navigate("Game", {
+      levelId: nextLevel.id,
+    });
   };
 
   return (
@@ -182,23 +280,22 @@ export default function HomeScreen({ navigation }: Props) {
           </Text>
 
           <View style={styles.heroActions}>
-            <CustomButton
-              label={
-                activeGame?.status === "playing"
-                  ? "Resume Puzzle"
-                  : "Play Next Level"
-              }
-              onPress={() =>
-                navigation.navigate("Game", {
-                  levelId:
-                    activeGame?.status === "playing"
-                      ? activeGame.levelId
-                      : nextLevel.id,
-                })
-              }
-              icon={<Ionicons color={COLORS.surface} name="play" size={18} />}
-              style={styles.heroButton}
-            />
+            {hasResumablePuzzle ? (
+              <CustomButton
+                label="Resume Puzzle"
+                onPress={handleResumePuzzle}
+                icon={<Ionicons color={COLORS.surface} name="play" size={18} />}
+                style={styles.heroButton}
+              />
+            ) : (
+              <CustomButton
+                disabled={!isGameStateHydrated}
+                label={isGameStateHydrated ? "Play Next Level" : "Loading..."}
+                onPress={handleStartNextLevel}
+                icon={<Ionicons color={COLORS.surface} name="play" size={18} />}
+                style={styles.heroButton}
+              />
+            )}
             <CustomButton
               label="Open Level Map"
               variant="secondary"
@@ -228,13 +325,16 @@ export default function HomeScreen({ navigation }: Props) {
 
         <View style={styles.infoCard}>
           <Text style={styles.infoTitle}>Wallet</Text>
-          <Text
-            adjustsFontSizeToFit
-            numberOfLines={1}
-            style={styles.infoHeadline}
-          >
-            {isCoinHydrated ? `${coins} coins ready` : "Loading wallet"}
-          </Text>
+          <View style={styles.coinHeadlineRow}>
+            {isCoinHydrated ? <CoinIcon size={22} /> : null}
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={styles.infoHeadline}
+            >
+              {isCoinHydrated ? `${coins} ready` : "Loading wallet"}
+            </Text>
+          </View>
           <Text style={styles.infoBody}>
             Earn coins by playing daily challenges and watching ads.
           </Text>
@@ -248,7 +348,9 @@ export default function HomeScreen({ navigation }: Props) {
               challenges add even more rewards.
             </Text>
             <CustomButton
-              disabled={!isCoinHydrated || isRewardAdLoading}
+              disabled={
+                !isCoinHydrated || isRewardAdLoading || !isRewardedAdReady
+              }
               label={
                 isRewardAdLoading
                   ? "Loading ad..."
@@ -327,9 +429,13 @@ export default function HomeScreen({ navigation }: Props) {
                   </Text>
                 </View>
               </View>
-              <Text style={styles.dailyRewardText}>
-                Reward: {pendingDailyRewards} coins
-              </Text>
+              <View style={styles.dailyRewardRow}>
+                <Text style={styles.dailyRewardText}>Reward:</Text>
+                <CoinIcon size={14} />
+                <Text style={styles.dailyRewardText}>
+                  {pendingDailyRewards}
+                </Text>
+              </View>
               <CustomButton
                 label="Open Daily Challenges"
                 onPress={handleOpenDailyChallenges}
@@ -373,27 +479,38 @@ export default function HomeScreen({ navigation }: Props) {
             />
           </View>
 
-          <Text
-            adjustsFontSizeToFit
-            numberOfLines={1}
-            style={styles.themeCardCurrent}
-          >
-            Current: {activeTheme.name}
-            {isCoinHydrated ? ` | Wallet: ${coins}` : ""}
-          </Text>
+          <View style={styles.themeWalletRow}>
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={styles.themeCardCurrent}
+            >
+              Current: {activeTheme.name}
+            </Text>
+            {isCoinHydrated ? (
+              <View style={styles.themeWalletBadge}>
+                <CoinIcon size={14} />
+                <Text style={styles.themeWalletText}>{coins}</Text>
+              </View>
+            ) : null}
+          </View>
         </Pressable>
       </ScrollView>
 
-      {Platform.OS !== "web" && bannerAdsEnabled && bannerAdUnitId ? (
+      {Platform.OS !== "web" &&
+      bannerAdsEnabled &&
+      bannerAdUnitId &&
+      BannerAdComponent &&
+      bannerAdaptiveSize ? (
         <View
           style={[
             styles.bannerContainer,
             { backgroundColor: activeTheme.colors.background },
           ]}
         >
-          <BannerAd
+          <BannerAdComponent
             requestOptions={{ requestNonPersonalizedAdsOnly: true }}
-            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            size={bannerAdaptiveSize}
             unitId={bannerAdUnitId}
           />
         </View>
@@ -514,9 +631,13 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 24,
     fontWeight: "900",
-    marginTop: 8,
     lineHeight: 30,
     flexShrink: 1,
+  },
+  coinHeadlineRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
   },
   routeMessage: {
     marginTop: 12,
@@ -610,7 +731,11 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: 14,
     fontWeight: "700",
+  },
+  dailyRewardRow: {
     marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
   },
   dailyButton: {
     marginTop: 14,
@@ -669,8 +794,27 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: 14,
     fontWeight: "800",
-    marginTop: 14,
     flexShrink: 1,
+  },
+  themeWalletRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  themeWalletBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  themeWalletText: {
+    color: COLORS.primaryDark,
+    fontSize: 12,
+    fontWeight: "800",
   },
   bannerContainer: {
     alignItems: "center",

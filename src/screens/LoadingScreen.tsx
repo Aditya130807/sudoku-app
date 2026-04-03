@@ -3,7 +3,15 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../constants/colors";
 import { useAppTheme } from "../context/ThemeContext";
 
-export default function LoadingScreen() {
+interface LoadingScreenProps {
+  subtitle?: string;
+  showFallback?: boolean;
+}
+
+export default function LoadingScreen({
+  subtitle = "Preparing your puzzle...",
+  showFallback = false,
+}: LoadingScreenProps) {
   const { activeTheme } = useAppTheme();
 
   return (
@@ -23,7 +31,13 @@ export default function LoadingScreen() {
       <ActivityIndicator size="large" color={COLORS.primary} />
 
       {/* Subtitle */}
-      <Text style={styles.subtitle}>Preparing your puzzle...</Text>
+      <Text style={styles.subtitle}>{subtitle}</Text>
+
+      {showFallback ? (
+        <Text style={styles.fallbackMessage}>
+          You can keep using the app while background sync finishes.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -46,5 +60,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textMuted,
     fontWeight: "600",
+  },
+
+  fallbackMessage: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    textAlign: "center",
+    fontSize: 12,
+    color: COLORS.textMuted,
   },
 });

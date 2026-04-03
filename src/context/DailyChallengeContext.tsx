@@ -1,4 +1,3 @@
-import { onAuthStateChanged } from "firebase/auth";
 import React, {
   createContext,
   useCallback,
@@ -10,7 +9,6 @@ import React, {
 } from "react";
 
 import { TOTAL_LEVELS } from "../constants/levels";
-import { auth } from "../firebase";
 import {
   DAILY_CHALLENGE_UNLOCK_LEVEL,
   DailyRewardChallenge,
@@ -21,10 +19,8 @@ import {
 } from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
 import { storageService } from "../services/storageService";
-import {
-  loadUserData,
-  persistDailyStatsForCurrentUser,
-} from "../services/userDataService";
+import { persistDailyStatsForCurrentUser } from "../services/userDataService";
+import { useAuthState } from "./AuthStateContext";
 import { useCoins } from "./CoinContext";
 
 interface DailyChallengeStatus extends DailyRewardChallenge {
@@ -77,6 +73,7 @@ export function DailyChallengeProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const { authSyncVersion, latestUserData } = useAuthState();
   const { addCoins } = useCoins();
   const [storedClaimedChallengeIds, setStoredClaimedChallengeIds] = useState<
     DailyRewardChallengeId[]
@@ -108,50 +105,35 @@ export function DailyChallengeProvider({
   );
 
   useEffect(() => {
-    let isDisposed = false;
-    let syncVersion = 0;
+    skipNextPersistRef.current = true;
 
-    const syncFromAuthState = async (userId: string | null) => {
-      syncVersion += 1;
-      const currentSyncVersion = syncVersion;
-      const loadResult = await loadUserData(userId);
-      const storedState = loadResult.data.stats;
+    const storedState = latestUserData?.stats;
 
-      if (isDisposed || currentSyncVersion !== syncVersion) {
-        return;
-      }
-
-      skipNextPersistRef.current = true;
-
-      const shouldKeepStreak =
-        !!storedState.lastClaimDate &&
-        (storedState.lastClaimDate === todayKey ||
-          isYesterday(storedState.lastClaimDate, todayKey));
-
-      setStoredClaimedChallengeIds(
-        storedState.lastClaimDate === todayKey
-          ? sanitizeClaimedChallengeIds(
-              storedState.claimedChallengeIds,
-              challengeIds,
-            )
-          : [],
-      );
-      setLastClaimDate(storedState.lastClaimDate);
-      setStoredStreakCount(shouldKeepStreak ? storedState.streakCount : 0);
+    if (!storedState) {
+      setStoredClaimedChallengeIds([]);
+      setLastClaimDate(null);
+      setStoredStreakCount(0);
       setIsHydrated(true);
-    };
+      return;
+    }
 
-    void syncFromAuthState(auth.currentUser?.uid ?? null);
+    const shouldKeepStreak =
+      !!storedState.lastClaimDate &&
+      (storedState.lastClaimDate === todayKey ||
+        isYesterday(storedState.lastClaimDate, todayKey));
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      void syncFromAuthState(user?.uid ?? null);
-    });
-
-    return () => {
-      isDisposed = true;
-      unsubscribe();
-    };
-  }, [challengeIds, todayKey]);
+    setStoredClaimedChallengeIds(
+      storedState.lastClaimDate === todayKey
+        ? sanitizeClaimedChallengeIds(
+            storedState.claimedChallengeIds,
+            challengeIds,
+          )
+        : [],
+    );
+    setLastClaimDate(storedState.lastClaimDate);
+    setStoredStreakCount(shouldKeepStreak ? storedState.streakCount : 0);
+    setIsHydrated(true);
+  }, [authSyncVersion, challengeIds, latestUserData, todayKey]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -163,17 +145,19 @@ export function DailyChallengeProvider({
       return;
     }
 
-    void storageService.saveDailyEconomyState({
-      claimedChallengeIds: storedClaimedChallengeIds,
-      lastClaimDate,
-      streakCount: storedStreakCount,
-    });
+    void storageService
+      .saveDailyEconomyState({
+        claimedChallengeIds: storedClaimedChallengeIds,
+        lastClaimDate,
+        streakCount: storedStreakCount,
+      })
+      .catch(() => {});
 
     void persistDailyStatsForCurrentUser({
       claimedChallengeIds: storedClaimedChallengeIds,
       streakCount: storedStreakCount,
       lastClaimDate,
-    });
+    }).catch(() => {});
   }, [isHydrated, lastClaimDate, storedClaimedChallengeIds, storedStreakCount]);
 
   const claimChallenges = useCallback(

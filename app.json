@@ -1,32 +1,34 @@
 {
   "expo": {
-    "name": "sudoku-app",
+    "name": "Sudoku Ryve",
     "slug": "sudoku-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "sudokuapp",
     "userInterfaceStyle": "automatic",
-
     "ios": {
       "icon": "./assets/icon.png",
       "supportsTablet": true
     },
-
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/adaptive-icon.png"
       },
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
       "predictiveBackGestureEnabled": false,
       "package": "com.pandey_sachin11.sudokuapp"
     },
-
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
     "plugins": [
       [
         "react-native-google-mobile-ads",
@@ -46,22 +48,24 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-audio"
     ],
-
     "extra": {
-      "privacyPolicyUrl": "https://example.com/sudoku-ryve/privacy",
-      "accountDeletionUrl": "https://example.com/sudoku-ryve/delete-account",
+      "privacyPolicyUrl": "https://aditya130807.github.io/sudoku-ryve-privacy-policy/privacy-policy",
+      "accountDeletionUrl": "https://aditya130807.github.io/sudoku-ryve-privacy-policy/account-deletion",
       "admob": {
         "androidBannerUnitId": "ca-app-pub-8048301971162422/3047292788",
         "iosBannerUnitId": "",
         "androidInterstitialUnitId": "ca-app-pub-8048301971162422/4817765958",
         "iosInterstitialUnitId": "",
-        "androidRewardedUnitId": "ca-app-pub-8048301971162422/8654842680",
+        "androidRewardedUnitId": "ca-app-pub-8048301971162422/9489193036",
         "iosRewardedUnitId": ""
+      },
+      "eas": {
+        "projectId": "b33ca39d-481c-4c3b-ab28-8fa82c1a4352"
       }
     },
-
     "experiments": {
       "reactCompiler": true
     }

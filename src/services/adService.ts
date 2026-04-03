@@ -1,13 +1,7 @@
 import Constants from "expo-constants";
-import { Platform } from "react-native";
-import mobileAds, {
-  AdEventType,
-  InterstitialAd,
-  RequestOptions,
-  RewardedAd,
-  RewardedAdEventType,
-  TestIds,
-} from "react-native-google-mobile-ads";
+import { NativeModules, Platform } from "react-native";
+
+type AdsModule = any;
 
 type AdMobExtraConfig = {
   androidBannerUnitId?: string;
@@ -18,20 +12,79 @@ type AdMobExtraConfig = {
   iosRewardedUnitId?: string;
 };
 
-const requestOptions: RequestOptions = {
+type AdRequestOptions = {
+  requestNonPersonalizedAdsOnly: boolean;
+};
+
+const requestOptions: AdRequestOptions = {
   requestNonPersonalizedAdsOnly: true,
 };
 
 let initializePromise: Promise<unknown> | null = null;
-let interstitial: InterstitialAd | null = null;
+let interstitial: any = null;
 let interstitialLoaded = false;
 let interstitialLoadPromise: Promise<void> | null = null;
+let rewardedAd: any = null;
+export let isRewardedLoaded = false;
+let rewardedLoadPromise: Promise<void> | null = null;
+let cachedAdsModule: AdsModule | null | undefined;
+const rewardedStateListeners = new Set<(loaded: boolean) => void>();
+
+function notifyRewardedStateChanged() {
+  rewardedStateListeners.forEach((listener) => {
+    listener(isRewardedLoaded);
+  });
+}
+
+export function subscribeRewardedAdState(listener: (loaded: boolean) => void) {
+  rewardedStateListeners.add(listener);
+  listener(isRewardedLoaded);
+
+  return () => {
+    rewardedStateListeners.delete(listener);
+  };
+}
+
+function getAdsModule(): AdsModule | null {
+  if (cachedAdsModule !== undefined) {
+    return cachedAdsModule;
+  }
+
+  // In Expo Go or misconfigured builds, this native module may not be linked.
+  if (!NativeModules.RNGoogleMobileAdsModule) {
+    cachedAdsModule = null;
+    return cachedAdsModule;
+  }
+
+  let ads: AdsModule | null = null;
+
+  try {
+    ads = require("react-native-google-mobile-ads") as AdsModule;
+  } catch {
+    ads = null;
+  }
+
+  if (!ads) {
+    cachedAdsModule = null;
+    return cachedAdsModule;
+  }
+
+  cachedAdsModule = ads;
+
+  return cachedAdsModule;
+}
 
 const extraConfig =
   (Constants.expoConfig?.extra?.admob as AdMobExtraConfig | undefined) ?? {};
 
+const DEV_TEST_IDS = {
+  BANNER: "ca-app-pub-3940256099942544/6300978111",
+  INTERSTITIAL: "ca-app-pub-3940256099942544/1033173712",
+  REWARDED: "ca-app-pub-3940256099942544/5224354917",
+} as const;
+
 function resolveUnitId(
-  testUnitId: string,
+  testUnitId: string | null,
   androidUnitId?: string,
   iosUnitId?: string,
 ): string | null {
@@ -47,21 +100,21 @@ function resolveUnitId(
 }
 
 export const bannerAdUnitId = resolveUnitId(
-  TestIds.BANNER,
+  DEV_TEST_IDS.BANNER,
   extraConfig.androidBannerUnitId,
   extraConfig.iosBannerUnitId,
 );
 export const bannerAdsEnabled = bannerAdUnitId !== null;
 
 const interstitialAdUnitId = resolveUnitId(
-  TestIds.INTERSTITIAL,
+  DEV_TEST_IDS.INTERSTITIAL,
   extraConfig.androidInterstitialUnitId,
   extraConfig.iosInterstitialUnitId,
 );
 export const interstitialAdsEnabled = interstitialAdUnitId !== null;
 
 const rewardedAdUnitId = resolveUnitId(
-  TestIds.REWARDED,
+  DEV_TEST_IDS.REWARDED,
   extraConfig.androidRewardedUnitId,
   extraConfig.iosRewardedUnitId,
 );
@@ -71,12 +124,15 @@ const adsEnabled =
   bannerAdsEnabled || interstitialAdsEnabled || rewardedAdsEnabled;
 
 export function initializeAds() {
-  if (!adsEnabled) {
+  const activeAdsModule = getAdsModule();
+
+  if (!adsEnabled || !activeAdsModule) {
     return Promise.resolve();
   }
 
   if (!initializePromise) {
-    initializePromise = mobileAds()
+    initializePromise = activeAdsModule
+      .default()
       .initialize()
       .catch(() => undefined);
   }
@@ -85,7 +141,9 @@ export function initializeAds() {
 }
 
 export async function preloadInterstitialAd() {
-  if (!interstitialAdUnitId) {
+  const activeAdsModule = getAdsModule();
+
+  if (!interstitialAdUnitId || !activeAdsModule) {
     return;
   }
 
@@ -99,7 +157,7 @@ export async function preloadInterstitialAd() {
     return interstitialLoadPromise;
   }
 
-  interstitial = InterstitialAd.createForAdRequest(
+  interstitial = activeAdsModule.InterstitialAd.createForAdRequest(
     interstitialAdUnitId,
     requestOptions,
   );
@@ -136,14 +194,14 @@ export async function preloadInterstitialAd() {
     };
 
     const unsubscribeLoaded = activeInterstitial.addAdEventListener(
-      AdEventType.LOADED,
+      activeAdsModule.AdEventType.LOADED,
       () => {
         finish(true);
       },
     );
 
     const unsubscribeError = activeInterstitial.addAdEventListener(
-      AdEventType.ERROR,
+      activeAdsModule.AdEventType.ERROR,
       () => {
         finish(false);
       },
@@ -151,7 +209,7 @@ export async function preloadInterstitialAd() {
 
     fallbackTimer = setTimeout(() => {
       finish(false);
-    }, 8000);
+    }, 5000);
 
     activeInterstitial.load();
   });
@@ -160,7 +218,9 @@ export async function preloadInterstitialAd() {
 }
 
 export async function showInterstitialAd() {
-  if (!interstitialAdUnitId) {
+  const activeAdsModule = getAdsModule();
+
+  if (!interstitialAdUnitId || !activeAdsModule) {
     return;
   }
 
@@ -192,12 +252,12 @@ export async function showInterstitialAd() {
     };
 
     const unsubscribeClosed = readyInterstitial.addAdEventListener(
-      AdEventType.CLOSED,
+      activeAdsModule.AdEventType.CLOSED,
       finish,
     );
 
     const unsubscribeError = readyInterstitial.addAdEventListener(
-      AdEventType.ERROR,
+      activeAdsModule.AdEventType.ERROR,
       finish,
     );
 
@@ -206,60 +266,169 @@ export async function showInterstitialAd() {
     });
   });
 
-  void preloadInterstitialAd();
+  void preloadInterstitialAd().catch(() => {
+    // Keep gameplay flow stable if ad preloading fails.
+  });
+}
+
+export async function preloadRewardedAd() {
+  const activeAdsModule = getAdsModule();
+
+  if (!rewardedAdUnitId || !activeAdsModule) {
+    return;
+  }
+
+  await initializeAds();
+
+  if (rewardedAd && isRewardedLoaded) {
+    return;
+  }
+
+  if (rewardedLoadPromise) {
+    return rewardedLoadPromise;
+  }
+
+  if (!rewardedAd) {
+    rewardedAd = activeAdsModule.RewardedAd.createForAdRequest(
+      rewardedAdUnitId,
+      requestOptions,
+    );
+  }
+
+  const activeRewardedAd = rewardedAd;
+
+  if (!activeRewardedAd) {
+    return;
+  }
+
+  rewardedLoadPromise = new Promise<void>((resolve) => {
+    let settled = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribeClosed = () => {};
+
+    const finish = (didLoad: boolean) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+      }
+
+      unsubscribeLoaded();
+      unsubscribeError();
+      if (!didLoad) {
+        unsubscribeClosed();
+      }
+
+      isRewardedLoaded = didLoad && rewardedAd === activeRewardedAd;
+      notifyRewardedStateChanged();
+
+      if (!isRewardedLoaded && rewardedAd === activeRewardedAd) {
+        rewardedAd = null;
+      }
+
+      rewardedLoadPromise = null;
+      resolve();
+    };
+
+    const unsubscribeLoaded = activeRewardedAd.addAdEventListener(
+      activeAdsModule.RewardedAdEventType.LOADED,
+      () => {
+        finish(true);
+      },
+    );
+
+    const unsubscribeError = activeRewardedAd.addAdEventListener(
+      activeAdsModule.AdEventType.ERROR,
+      (error: any) => {
+        console.log("Ad error:", error);
+        console.error("Rewarded ad failed to load:", error);
+
+        finish(false);
+      },
+    );
+
+    unsubscribeClosed = activeRewardedAd.addAdEventListener(
+      activeAdsModule.AdEventType.CLOSED,
+      () => {
+        if (rewardedAd !== activeRewardedAd) {
+          return;
+        }
+
+        isRewardedLoaded = false;
+        notifyRewardedStateChanged();
+        rewardedAd = null;
+        rewardedLoadPromise = null;
+      },
+    );
+
+    fallbackTimer = setTimeout(() => {
+      finish(false);
+    }, 8000);
+
+    activeRewardedAd.load();
+  });
+
+  return rewardedLoadPromise;
 }
 
 export async function showRewardedAd() {
-  if (!rewardedAdUnitId) {
+  const activeAdsModule = getAdsModule();
+
+  if (!rewardedAdUnitId || !activeAdsModule) {
     return false;
   }
 
-  const rewardedAd = RewardedAd.createForAdRequest(
-    rewardedAdUnitId,
-    requestOptions,
-  );
+  const activeRewardedAd = rewardedAd;
+
+  if (!activeRewardedAd || !isRewardedLoaded) {
+    return false;
+  }
 
   return new Promise<boolean>((resolve) => {
     let earnedReward = false;
+    let settled = false;
 
     const finish = (didEarnReward: boolean) => {
-      unsubscribeLoaded();
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       unsubscribeReward();
       unsubscribeClosed();
       unsubscribeError();
       resolve(didEarnReward);
     };
 
-    const unsubscribeLoaded = rewardedAd.addAdEventListener(
-      AdEventType.LOADED,
-      () => {
-        void rewardedAd.show().catch(() => {
-          finish(false);
-        });
-      },
-    );
-
-    const unsubscribeReward = rewardedAd.addAdEventListener(
-      RewardedAdEventType.EARNED_REWARD,
+    const unsubscribeReward = activeRewardedAd.addAdEventListener(
+      activeAdsModule.RewardedAdEventType.EARNED_REWARD,
       () => {
         earnedReward = true;
       },
     );
 
-    const unsubscribeClosed = rewardedAd.addAdEventListener(
-      AdEventType.CLOSED,
+    const unsubscribeClosed = activeRewardedAd.addAdEventListener(
+      activeAdsModule.AdEventType.CLOSED,
       () => {
         finish(earnedReward);
       },
     );
 
-    const unsubscribeError = rewardedAd.addAdEventListener(
-      AdEventType.ERROR,
-      () => {
+    const unsubscribeError = activeRewardedAd.addAdEventListener(
+      activeAdsModule.AdEventType.ERROR,
+      (error: unknown) => {
+        console.log("Ad error:", error);
+        console.error("Rewarded ad runtime error:", error);
         finish(false);
       },
     );
 
-    rewardedAd.load();
+    void activeRewardedAd.show().catch(() => {
+      finish(false);
+    });
   });
 }

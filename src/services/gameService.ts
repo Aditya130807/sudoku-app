@@ -1,6 +1,11 @@
-import { getLevelDefinition, getNextLevelId, LEVELS } from "../constants/levels";
+import {
+  getLevelDefinition,
+  getNextLevelId,
+  LEVELS,
+} from "../constants/levels";
 import { PUZZLES } from "../data/puzzles";
 import { getGridConfig } from "../game/difficulty";
+import { getHintMove } from "../game/solver";
 import {
   Board,
   CellStateBoard,
@@ -11,7 +16,6 @@ import {
   LevelProgress,
   SectionCompletion,
 } from "../game/types";
-import { getHintMove } from "../game/solver";
 import {
   cloneBoard,
   cloneCellStateBoard,
@@ -19,9 +23,9 @@ import {
   getIncorrectCellKeys,
   isBoardSolved,
 } from "../game/validator";
-import { storageService } from "./storageService";
 import { gameStore } from "../store/gameStore";
 import { userStore } from "../store/userStore";
+import { storageService } from "./storageService";
 
 export interface GameActionResult {
   ok: boolean;
@@ -48,7 +52,7 @@ function createCellStatesFromBoard(board: Board): CellStateBoard {
     row.map((value) => ({
       value,
       notes: [],
-    }))
+    })),
   );
 }
 
@@ -90,7 +94,9 @@ function getGeneratedPuzzle(levelId: number): GeneratedPuzzle {
     grid.every(
       (row) =>
         row.length === 9 &&
-        row.every((value) => Number.isInteger(value) && value >= 0 && value <= 9)
+        row.every(
+          (value) => Number.isInteger(value) && value >= 0 && value <= 9,
+        ),
     );
 
   if (
@@ -102,15 +108,15 @@ function getGeneratedPuzzle(levelId: number): GeneratedPuzzle {
 
   const normalizedPuzzle: GeneratedPuzzle = {
     puzzle: puzzleData.puzzle.map((row) =>
-      row.map((value) => (value === 0 ? null : value))
+      row.map((value) => (value === 0 ? null : value)),
     ),
     solution: puzzleData.solution.map((row) =>
-      row.map((value) => (value === 0 ? null : value))
+      row.map((value) => (value === 0 ? null : value)),
     ),
   };
 
   const hasInvalidSolution = normalizedPuzzle.solution.some((row) =>
-    row.some((value) => value === null)
+    row.some((value) => value === null),
   );
 
   if (hasInvalidSolution) {
@@ -125,15 +131,23 @@ function getGeneratedPuzzle(levelId: number): GeneratedPuzzle {
   };
 }
 
-function createSession(levelId: number): GameSession {
+function createSession(
+  levelId: number,
+  options?: {
+    isDailyChallenge?: boolean;
+    challengeType?: "speed" | "noHint" | "mystery";
+  },
+): GameSession {
   const level = getLevelDefinition(levelId);
   const generatedPuzzle = getGeneratedPuzzle(levelId);
   if (!level) {
-  throw new Error("Invalid level");
-}
+    throw new Error("Invalid level");
+  }
 
   return {
     levelId,
+    isDailyChallenge: options?.isDailyChallenge,
+    challengeType: options?.challengeType,
     puzzle: generatedPuzzle.puzzle,
     solution: generatedPuzzle.solution,
     board: cloneBoard(generatedPuzzle.puzzle),
@@ -163,7 +177,7 @@ export function getElapsedSeconds(session: GameSession): number {
 
 function calculateMetrics(
   session: GameSession,
-  elapsedSeconds: number
+  elapsedSeconds: number,
 ): GameMetrics {
   const level = getLevelDefinition(session.levelId);
   const baseScore =
@@ -191,13 +205,12 @@ function calculateMetrics(
 }
 
 function countCompletedLevels(progress: Record<number, LevelProgress>): number {
-  return Object.values(progress).filter(
-    (entry) => entry.status === "completed"
-  ).length;
+  return Object.values(progress).filter((entry) => entry.status === "completed")
+    .length;
 }
 
 function normalizeSequentialProgress(
-  progress: Record<number, LevelProgress>
+  progress: Record<number, LevelProgress>,
 ): Record<number, LevelProgress> {
   const normalized: Record<number, LevelProgress> = {};
   let progressionOpen = true;
@@ -236,7 +249,7 @@ function normalizeSequentialProgress(
 function updateProgressAfterCompletion(
   progress: Record<number, LevelProgress>,
   session: GameSession,
-  metrics: GameMetrics
+  metrics: GameMetrics,
 ): Record<number, LevelProgress> {
   const updatedProgress = normalizeSequentialProgress(progress);
   const currentProgress = updatedProgress[session.levelId];
@@ -278,8 +291,9 @@ export const gameService = {
     const { progress } = gameStore.getState();
     const normalizedProgress = normalizeSequentialProgress(progress);
     const nextLevel =
-      LEVELS.find((level) => normalizedProgress[level.id].status !== "completed") ??
-      LEVELS[LEVELS.length - 1];
+      LEVELS.find(
+        (level) => normalizedProgress[level.id].status !== "completed",
+      ) ?? LEVELS[LEVELS.length - 1];
 
     return nextLevel.id;
   },
@@ -289,12 +303,26 @@ export const gameService = {
     return Object.values(progress).reduce((sum, entry) => sum + entry.stars, 0);
   },
 
-  startLevel(levelId: number, options?: { forceNew?: boolean }): GameActionResult {
+  startLevel(
+    levelId: number,
+    options?: {
+      forceNew?: boolean;
+      allowLocked?: boolean;
+      skipProgressTracking?: boolean;
+      isDailyChallenge?: boolean;
+      challengeType?: "speed" | "noHint" | "mystery";
+    },
+  ): GameActionResult {
     const currentState = gameStore.getState();
-    const normalizedProgress = normalizeSequentialProgress(currentState.progress);
+    const normalizedProgress = normalizeSequentialProgress(
+      currentState.progress,
+    );
     const levelProgress = normalizedProgress[levelId];
+    const isDailyChallenge = options?.isDailyChallenge === true;
+    const allowLocked = options?.allowLocked === true;
+    const skipProgressTracking = options?.skipProgressTracking === true;
 
-    if (!levelProgress || levelProgress.status === "locked") {
+    if (!allowLocked && (!levelProgress || levelProgress.status === "locked")) {
       return {
         ok: false,
         message: "That level is still locked.",
@@ -305,7 +333,8 @@ export const gameService = {
       !options?.forceNew &&
       currentState.activeGame &&
       currentState.activeGame.levelId === levelId &&
-      currentState.activeGame.status === "playing"
+      currentState.activeGame.status === "playing" &&
+      Boolean(currentState.activeGame.isDailyChallenge) === isDailyChallenge
     ) {
       return {
         ok: true,
@@ -313,7 +342,10 @@ export const gameService = {
       };
     }
 
-    const session = createSession(levelId);
+    const session = createSession(levelId, {
+      isDailyChallenge,
+      challengeType: options?.challengeType,
+    });
     if (!session || !session.board) {
       return { ok: false, message: "Failed to initialize level" };
     }
@@ -321,18 +353,22 @@ export const gameService = {
     gameStore.setState((previousState) => ({
       ...previousState,
       activeGame: session,
-      lastPlayedLevelId: levelId,
-      progress: {
-        ...normalizedProgress,
-        [levelId]: {
-          ...normalizedProgress[levelId],
-          status:
-            normalizedProgress[levelId].status === "completed"
-              ? "completed"
-              : "in_progress",
-          attempts: normalizedProgress[levelId].attempts + 1,
-        },
-      },
+      lastPlayedLevelId: skipProgressTracking
+        ? previousState.lastPlayedLevelId
+        : levelId,
+      progress: skipProgressTracking
+        ? previousState.progress
+        : {
+            ...normalizedProgress,
+            [levelId]: {
+              ...normalizedProgress[levelId],
+              status:
+                normalizedProgress[levelId].status === "completed"
+                  ? "completed"
+                  : "in_progress",
+              attempts: normalizedProgress[levelId].attempts + 1,
+            },
+          },
     }));
 
     persistSession(session);
@@ -372,7 +408,11 @@ export const gameService = {
     const currentState = gameStore.getState();
     const { activeGame } = currentState;
 
-    if (!activeGame || activeGame.status !== "playing" || !activeGame.selectedCell) {
+    if (
+      !activeGame ||
+      activeGame.status !== "playing" ||
+      !activeGame.selectedCell
+    ) {
       return {
         ok: false,
         message: "Choose a cell first.",
@@ -380,13 +420,14 @@ export const gameService = {
     }
 
     const { row, col } = activeGame.selectedCell;
-      if (
-    row < 0 || col < 0 ||
-    row >= activeGame.board.length ||
-    col >= activeGame.board.length
-  ) {
-    return { ok: false, message: "Invalid cell" };
-  }
+    if (
+      row < 0 ||
+      col < 0 ||
+      row >= activeGame.board.length ||
+      col >= activeGame.board.length
+    ) {
+      return { ok: false, message: "Invalid cell" };
+    }
 
     if (activeGame.puzzle[row][col] !== null) {
       return {
@@ -463,7 +504,11 @@ export const gameService = {
   eraseSelectedCell(): GameActionResult {
     const { activeGame } = gameStore.getState();
 
-    if (!activeGame || activeGame.status !== "playing" || !activeGame.selectedCell) {
+    if (
+      !activeGame ||
+      activeGame.status !== "playing" ||
+      !activeGame.selectedCell
+    ) {
       return {
         ok: false,
         message: "Choose a cell first.",
@@ -529,7 +574,7 @@ export const gameService = {
     const hintMove = getHintMove(
       activeGame.board,
       activeGame.puzzle,
-      activeGame.solution
+      activeGame.solution,
     );
 
     if (!hintMove) {
@@ -648,17 +693,17 @@ export const gameService = {
   buildHighlights(
     session: GameSession,
     settings: GameSettings,
-    options?: { revealIncorrectValues?: boolean }
+    options?: { revealIncorrectValues?: boolean },
   ): BoardHighlights {
     const level = getLevelDefinition(session.levelId);
-    
+
     if (!level) {
-  return {
-    selectedValue: null,
-    incorrectCellKeys: new Set(),
-    completedSections: { rows: [], columns: [], boxes: [] }
-  };
-}
+      return {
+        selectedValue: null,
+        incorrectCellKeys: new Set(),
+        completedSections: { rows: [], columns: [], boxes: [] },
+      };
+    }
     const config = getGridConfig(level.size);
     const selectedValue = session.selectedCell
       ? session.board[session.selectedCell.row][session.selectedCell.col]
@@ -682,14 +727,16 @@ export const gameService = {
   },
 
   getRemainingSymbolCounts(board: Board, solution: Board) {
-    const counts = solution.flat().reduce<Record<number, number>>((result, value) => {
-      if (value === null) {
-        return result;
-      }
+    const counts = solution
+      .flat()
+      .reduce<Record<number, number>>((result, value) => {
+        if (value === null) {
+          return result;
+        }
 
-      result[value] = (result[value] ?? 0) + 1;
-      return result;
-    }, {});
+        result[value] = (result[value] ?? 0) + 1;
+        return result;
+      }, {});
 
     board.flat().forEach((value) => {
       if (value === null) {
@@ -718,15 +765,22 @@ export const gameService = {
     };
 
     gameStore.setState((currentState) => {
+      if (completedSession.isDailyChallenge) {
+        return {
+          ...currentState,
+          activeGame: completedSession,
+        };
+      }
+
       const updatedProgress = updateProgressAfterCompletion(
         currentState.progress,
         completedSession,
-        metrics
+        metrics,
       );
 
       try {
-      userStore.syncCompletedLevels(countCompletedLevels(updatedProgress))
-    } catch {}
+        userStore.syncCompletedLevels(countCompletedLevels(updatedProgress));
+      } catch {}
 
       return {
         ...currentState,
@@ -777,20 +831,32 @@ export const gameService = {
       startedAt: Date.now(),
     };
 
-    gameStore.setState((currentState) => ({
-      ...currentState,
-      activeGame: restoredSession,
-      lastPlayedLevelId: restoredSession.levelId,
-      progress: normalizeSequentialProgress({
-        ...currentState.progress,
-        [restoredSession.levelId]: {
-          ...currentState.progress[restoredSession.levelId],
-          status:
-            currentState.progress[restoredSession.levelId].status === "completed"
-              ? "completed"
-              : "in_progress",
-        },
-      }),
-    }));
+    gameStore.setState((currentState) => {
+      if (restoredSession.isDailyChallenge) {
+        return {
+          ...currentState,
+          activeGame: restoredSession,
+          lastPlayedLevelId: currentState.lastPlayedLevelId,
+          progress: currentState.progress,
+        };
+      }
+
+      return {
+        ...currentState,
+        activeGame: restoredSession,
+        lastPlayedLevelId: restoredSession.levelId,
+        progress: normalizeSequentialProgress({
+          ...currentState.progress,
+          [restoredSession.levelId]: {
+            ...currentState.progress[restoredSession.levelId],
+            status:
+              currentState.progress[restoredSession.levelId].status ===
+              "completed"
+                ? "completed"
+                : "in_progress",
+          },
+        }),
+      };
+    });
   },
 };
