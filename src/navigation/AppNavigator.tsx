@@ -20,6 +20,7 @@ import ThemeStoreScreen from "../screens/ThemeStoreScreen";
 import TutorialScreen from "../screens/TutorialScreen";
 import { storageService } from "../services/storageService";
 import { useUserStore } from "../store/userStore";
+import { navigationRef } from "./navigationRef";
 import { RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -107,7 +108,7 @@ export default function AppNavigator() {
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer theme={navigationTheme}>
+      <NavigationContainer ref={navigationRef} theme={navigationTheme}>
         <StatusBar style={getStatusBarStyle(activeTheme.colors.background)} />
         <Stack.Navigator
           key={`${isSignedIn ? "signed-in" : "signed-out"}-${

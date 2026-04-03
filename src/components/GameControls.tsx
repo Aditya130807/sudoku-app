@@ -1,6 +1,6 @@
+import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 
 import { COLORS } from "../constants/colors";
 import CustomButton from "./CustomButton";
@@ -11,6 +11,7 @@ interface GameControlsProps {
   onHint: () => void;
   onGuide: () => void;
   disableActions?: boolean;
+  disableHint?: boolean;
 }
 
 export default function GameControls({
@@ -19,6 +20,7 @@ export default function GameControls({
   onHint,
   onGuide,
   disableActions = false,
+  disableHint = false,
 }: GameControlsProps) {
   return (
     <View style={styles.container}>
@@ -26,7 +28,7 @@ export default function GameControls({
         label="Hint"
         variant="success"
         onPress={onHint}
-        disabled={disableActions}
+        disabled={disableActions || disableHint}
         icon={<Ionicons color={COLORS.surface} name="bulb-outline" size={18} />}
         style={styles.control}
         labelStyle={styles.controlLabel}
@@ -36,7 +38,9 @@ export default function GameControls({
         variant="secondary"
         onPress={onErase}
         disabled={disableActions}
-        icon={<Ionicons color={COLORS.primary} name="backspace-outline" size={16} />}
+        icon={
+          <Ionicons color={COLORS.primary} name="backspace-outline" size={16} />
+        }
         style={styles.control}
         labelStyle={styles.controlLabel}
       />
@@ -44,7 +48,9 @@ export default function GameControls({
         label="Guide"
         variant="ghost"
         onPress={onGuide}
-        icon={<Ionicons color={COLORS.text} name="help-circle-outline" size={16} />}
+        icon={
+          <Ionicons color={COLORS.text} name="help-circle-outline" size={16} />
+        }
         style={styles.control}
         labelStyle={styles.controlLabel}
       />

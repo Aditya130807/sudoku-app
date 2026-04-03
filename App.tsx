@@ -1,5 +1,6 @@
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
+import { Alert } from "react-native";
 
 import { AuthStateProvider } from "./src/context/AuthStateContext";
 import { CoinProvider } from "./src/context/CoinContext";
@@ -28,6 +29,7 @@ import {
 } from "./utils/soundManager";
 
 export default function App() {
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isAuthLoadTimedOut, setIsAuthLoadTimedOut] = useState(false);
   const [isMigrating, setIsMigrating] = useState(isAuthMigrationInProgress());
@@ -36,6 +38,9 @@ export default function App() {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [latestUserData, setLatestUserData] =
     useState<PersistedUserDataSnapshot | null>(null);
+  const [userDataLoadMessage, setUserDataLoadMessage] = useState<string | null>(
+    null,
+  );
   const authReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -89,6 +94,8 @@ export default function App() {
   useEffect(() => {
     let isDisposed = false;
     let authSyncVersion = 0;
+    let hasResolvedOnce = false;
+    let initialNullGraceTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const clearAuthReadyTimeout = () => {
       if (!authReadyTimeoutRef.current) {
@@ -99,7 +106,16 @@ export default function App() {
       authReadyTimeoutRef.current = null;
     };
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const clearInitialNullGraceTimeout = () => {
+      if (!initialNullGraceTimeout) {
+        return;
+      }
+
+      clearTimeout(initialNullGraceTimeout);
+      initialNullGraceTimeout = null;
+    };
+
+    const resolveAuthState = (user: User | null) => {
       authSyncVersion += 1;
       const currentSyncVersion = authSyncVersion;
       clearAuthReadyTimeout();
@@ -108,6 +124,7 @@ export default function App() {
       setAuthSyncVersion(currentSyncVersion);
       setAuthUserId(user?.uid ?? null);
       setLatestUserData(null);
+      setUserDataLoadMessage(null);
 
       authReadyTimeoutRef.current = setTimeout(() => {
         if (isDisposed || currentSyncVersion !== authSyncVersion) {
@@ -116,6 +133,7 @@ export default function App() {
 
         setIsAuthLoadTimedOut(true);
         setIsAuthReady(true);
+        setAuthInitialized(true);
       }, 5000);
 
       void (async () => {
@@ -138,7 +156,9 @@ export default function App() {
           hydrateStoresFromUserData(loadResult.data);
           setLatestUserData(loadResult.data);
         } catch {
-          if (!user) {
+          if (user) {
+            setUserDataLoadMessage("Failed to load data, retry");
+          } else {
             userStore.resetUser();
           }
         } finally {
@@ -146,13 +166,41 @@ export default function App() {
             clearAuthReadyTimeout();
             setIsAuthLoadTimedOut(false);
             setIsAuthReady(true);
+            setAuthInitialized(true);
           }
         }
       })();
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      clearInitialNullGraceTimeout();
+
+      if (!hasResolvedOnce && !user) {
+        hasResolvedOnce = true;
+
+        initialNullGraceTimeout = setTimeout(() => {
+          if (isDisposed) {
+            return;
+          }
+
+          if (auth.currentUser) {
+            resolveAuthState(auth.currentUser);
+            return;
+          }
+
+          resolveAuthState(null);
+        }, 700);
+        return;
+      }
+
+      hasResolvedOnce = true;
+
+      resolveAuthState(user);
     });
 
     return () => {
       isDisposed = true;
+      clearInitialNullGraceTimeout();
       clearAuthReadyTimeout();
       unsubscribe();
     };
@@ -165,6 +213,21 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!userDataLoadMessage) {
+      return;
+    }
+
+    Alert.alert("Data Sync", userDataLoadMessage, [
+      {
+        text: "OK",
+        onPress: () => {
+          setUserDataLoadMessage(null);
+        },
+      },
+    ]);
+  }, [userDataLoadMessage]);
 
   useEffect(() => {
     if (!isAuthReady) {
@@ -237,7 +300,10 @@ export default function App() {
       <CoinProvider>
         <DailyChallengeProvider>
           <ThemeProvider>
-            {isAuthReady && !isMigrating && isGameStateHydrated ? (
+            {authInitialized &&
+            isAuthReady &&
+            !isMigrating &&
+            isGameStateHydrated ? (
               <AppNavigator />
             ) : (
               <LoadingScreen

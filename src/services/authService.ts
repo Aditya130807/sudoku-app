@@ -294,6 +294,16 @@ export const authService = {
       await reauthenticateBeforeDelete(currentUser, options);
 
       try {
+        await deleteProfileDocumentWithRetry(userId);
+      } catch (error) {
+        if (getErrorCode(error) === "account/profile-delete-failed") {
+          throw error;
+        }
+
+        throw createAccountDeletionError(error);
+      }
+
+      try {
         await deleteUser(currentUser);
       } catch (error) {
         if (isRequiresRecentLoginError(error)) {
@@ -302,8 +312,6 @@ export const authService = {
 
         throw createAuthDeletionError(error);
       }
-
-      await deleteProfileDocumentWithRetry(userId);
 
       await clearStoredThemeState();
       await storageService.clearAllLocalData();

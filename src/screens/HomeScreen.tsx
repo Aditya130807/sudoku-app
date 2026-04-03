@@ -22,6 +22,7 @@ import { getLevelDefinition, TOTAL_LEVELS } from "../constants/levels";
 import { useCoins } from "../context/CoinContext";
 import { useDailyChallenges } from "../context/DailyChallengeContext";
 import { useAppTheme } from "../context/ThemeContext";
+import { navigationRef } from "../navigation/navigationRef";
 import { RootStackParamList } from "../navigation/types";
 import {
   bannerAdsEnabled,
@@ -98,6 +99,9 @@ export default function HomeScreen({ navigation }: Props) {
   const [isRewardAdLoading, setIsRewardAdLoading] = useState(false);
   const [isRewardedAdReady, setIsRewardedAdReady] = useState(isRewardedLoaded);
   const [rewardNotice, setRewardNotice] = useState<string | null>(null);
+  const [isNavigationReady, setIsNavigationReady] = useState(() =>
+    navigationRef.isReady(),
+  );
   const hasResumablePuzzle =
     isGameStateHydrated && activeGame?.status === "playing";
 
@@ -106,17 +110,32 @@ export default function HomeScreen({ navigation }: Props) {
   }, []);
 
   useEffect(() => {
+    if (navigationRef.isReady()) {
+      setIsNavigationReady(true);
+      return;
+    }
+
+    const unsubscribe = navigationRef.addListener("state", () => {
+      if (navigationRef.isReady()) {
+        setIsNavigationReady(true);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
     if (!isFocused || !rewardedAdsEnabled || isRewardedAdReady) {
+      return;
+    }
+
+    if (!isNavigationReady || !navigationRef.isReady()) {
       return;
     }
 
     let isDisposed = false;
 
-    const loadRewardedWhenFocused = async () => {
-      if (isDisposed) {
-        return;
-      }
-
+    const loadRewardedAdSafely = async () => {
       try {
         await initializeAds();
 
@@ -125,22 +144,38 @@ export default function HomeScreen({ navigation }: Props) {
         }
 
         await preloadRewardedAd();
-      } catch {}
+      } catch (error) {}
     };
 
-    void loadRewardedWhenFocused();
-
-    const retryTimer = setTimeout(() => {
-      if (!isDisposed) {
-        void loadRewardedWhenFocused();
-      }
-    }, 2000);
+    void loadRewardedAdSafely();
 
     return () => {
       isDisposed = true;
-      clearTimeout(retryTimer);
     };
-  }, [isFocused, isRewardedAdReady]);
+  }, [isFocused, isNavigationReady, isRewardedAdReady]);
+
+  useEffect(() => {
+    if (!isFocused || !rewardedAdsEnabled || isRewardedAdReady) {
+      return;
+    }
+
+    if (!isNavigationReady || !navigationRef.isReady()) {
+      return;
+    }
+
+    const retry = setTimeout(() => {
+      void (async () => {
+        try {
+          await initializeAds();
+          await preloadRewardedAd();
+        } catch (error) {}
+      })();
+    }, 1000);
+
+    return () => {
+      clearTimeout(retry);
+    };
+  }, [isFocused, isNavigationReady, isRewardedAdReady]);
 
   const handleWatchRewardedAd = async () => {
     if (

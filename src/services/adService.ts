@@ -344,7 +344,6 @@ export async function preloadRewardedAd() {
     const unsubscribeError = activeRewardedAd.addAdEventListener(
       activeAdsModule.AdEventType.ERROR,
       (error: any) => {
-        console.log("Ad error:", error);
         console.error("Rewarded ad failed to load:", error);
 
         finish(false);
@@ -391,6 +390,7 @@ export async function showRewardedAd() {
   return new Promise<boolean>((resolve) => {
     let earnedReward = false;
     let settled = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
     const finish = (didEarnReward: boolean) => {
       if (settled) {
@@ -398,6 +398,9 @@ export async function showRewardedAd() {
       }
 
       settled = true;
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+      }
       unsubscribeReward();
       unsubscribeClosed();
       unsubscribeError();
@@ -421,11 +424,14 @@ export async function showRewardedAd() {
     const unsubscribeError = activeRewardedAd.addAdEventListener(
       activeAdsModule.AdEventType.ERROR,
       (error: unknown) => {
-        console.log("Ad error:", error);
         console.error("Rewarded ad runtime error:", error);
         finish(false);
       },
     );
+
+    fallbackTimer = setTimeout(() => {
+      finish(false);
+    }, 7000);
 
     void activeRewardedAd.show().catch(() => {
       finish(false);

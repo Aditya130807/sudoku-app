@@ -35,6 +35,7 @@ export type DailyChallengeType = keyof DailyChallengeSet;
 export interface DailyChallengeProgressEntry {
   completed: boolean;
   claimed: boolean;
+  attemptsRemaining: number;
 }
 
 export interface DailyChallengeProgress {
@@ -66,6 +67,7 @@ const DAILY_PLAY_REWARD_COINS = 10;
 const DAILY_WIN_REWARD_COINS = 20;
 const DAILY_REWARD_COINS = 25;
 const DAILY_CHALLENGE_PROGRESS_KEY_PREFIX = "@sudoku_ryve/daily_progress";
+export const DAILY_CHALLENGE_MAX_ATTEMPTS = 2;
 
 const DAILY_CHALLENGE_REWARD_BY_TYPE: Record<DailyChallengeType, number> = {
   speed: 10,
@@ -101,10 +103,35 @@ function assertPoolHasValues(pool: readonly number[], poolName: string): void {
 
 function createEmptyDailyChallengeProgress(): DailyChallengeProgress {
   return {
-    speed: { completed: false, claimed: false },
-    noHint: { completed: false, claimed: false },
-    mystery: { completed: false, claimed: false },
+    speed: {
+      completed: false,
+      claimed: false,
+      attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+    },
+    noHint: {
+      completed: false,
+      claimed: false,
+      attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+    },
+    mystery: {
+      completed: false,
+      claimed: false,
+      attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+    },
   };
+}
+
+function isAttemptLimitedChallenge(type: DailyChallengeType): boolean {
+  return type === "speed" || type === "noHint";
+}
+
+function sanitizeAttemptsRemaining(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DAILY_CHALLENGE_MAX_ATTEMPTS;
+  }
+
+  const normalizedValue = Math.floor(value);
+  return Math.max(0, Math.min(DAILY_CHALLENGE_MAX_ATTEMPTS, normalizedValue));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,12 +142,17 @@ function sanitizeDailyChallengeProgressEntry(
   value: unknown,
 ): DailyChallengeProgressEntry {
   if (!isRecord(value)) {
-    return { completed: false, claimed: false };
+    return {
+      completed: false,
+      claimed: false,
+      attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+    };
   }
 
   return {
     completed: value.completed === true,
     claimed: value.claimed === true,
+    attemptsRemaining: sanitizeAttemptsRemaining(value.attemptsRemaining),
   };
 }
 
@@ -171,10 +203,56 @@ async function getDailyChallengeProgressStorageKey(): Promise<string> {
   return `${DAILY_CHALLENGE_PROGRESS_KEY_PREFIX}:${guestId}`;
 }
 
-async function loadStoredDailyChallengeProgressState(): Promise<StoredDailyChallengeProgressState | null> {
+async function cleanupLegacyDailyChallengeProgressKeys(
+  currentStorageKey: string,
+  currentDateKey: string,
+): Promise<void> {
   try {
-    const storageKey = await getDailyChallengeProgressStorageKey();
-    const rawValue = await AsyncStorage.getItem(storageKey);
+    const allKeys = await AsyncStorage.getAllKeys();
+    const candidateKeys = allKeys.filter(
+      (key) =>
+        key !== currentStorageKey &&
+        key.startsWith(`${DAILY_CHALLENGE_PROGRESS_KEY_PREFIX}:`),
+    );
+
+    if (candidateKeys.length === 0) {
+      return;
+    }
+
+    const entries = await AsyncStorage.multiGet(candidateKeys);
+    const keysToRemove = entries
+      .filter(([, rawValue]) => {
+        if (!rawValue) {
+          return false;
+        }
+
+        try {
+          const parsedValue: unknown = JSON.parse(rawValue);
+          const parsedState =
+            parseStoredDailyChallengeProgressState(parsedValue);
+
+          return !!parsedState && parsedState.date !== currentDateKey;
+        } catch {
+          return false;
+        }
+      })
+      .map(([key]) => key);
+
+    if (keysToRemove.length > 0) {
+      await AsyncStorage.multiRemove(keysToRemove);
+    }
+  } catch {
+    // Keep daily challenge loading resilient even if key cleanup fails.
+  }
+}
+
+async function loadStoredDailyChallengeProgressState(
+  storageKey?: string,
+): Promise<StoredDailyChallengeProgressState | null> {
+  try {
+    const resolvedStorageKey =
+      storageKey ?? (await getDailyChallengeProgressStorageKey());
+    const rawValue = await AsyncStorage.getItem(resolvedStorageKey);
 
     if (!rawValue) {
       return null;
@@ -189,14 +267,18 @@ async function loadStoredDailyChallengeProgressState(): Promise<StoredDailyChall
 
 async function saveStoredDailyChallengeProgressState(
   state: StoredDailyChallengeProgressState,
+  storageKey?: string,
 ): Promise<void> {
-  const storageKey = await getDailyChallengeProgressStorageKey();
-  await AsyncStorage.setItem(storageKey, JSON.stringify(state));
+  const resolvedStorageKey =
+    storageKey ?? (await getDailyChallengeProgressStorageKey());
+  await AsyncStorage.setItem(resolvedStorageKey, JSON.stringify(state));
 }
 
 async function ensureDailyChallengeProgressState(): Promise<StoredDailyChallengeProgressState> {
   const todaySeed = getDailySeed();
-  const storedState = await loadStoredDailyChallengeProgressState();
+  const storageKey = await getDailyChallengeProgressStorageKey();
+  await cleanupLegacyDailyChallengeProgressKeys(storageKey, todaySeed);
+  const storedState = await loadStoredDailyChallengeProgressState(storageKey);
 
   if (!storedState || storedState.date !== todaySeed) {
     const resetState: StoredDailyChallengeProgressState = {
@@ -204,7 +286,7 @@ async function ensureDailyChallengeProgressState(): Promise<StoredDailyChallenge
       progress: createEmptyDailyChallengeProgress(),
       allCompleteBonusClaimed: false,
     };
-    await saveStoredDailyChallengeProgressState(resetState);
+    await saveStoredDailyChallengeProgressState(resetState, storageKey);
     return resetState;
   }
 
@@ -314,6 +396,45 @@ export async function markCompleted(
       [type]: {
         ...state.progress[type],
         completed: true,
+      },
+    };
+
+    await saveStoredDailyChallengeProgressState({
+      date: state.date,
+      progress: nextProgress,
+      allCompleteBonusClaimed: state.allCompleteBonusClaimed,
+    });
+
+    return nextProgress;
+  });
+}
+
+export async function registerChallengeFailed(
+  type: DailyChallengeType,
+): Promise<DailyChallengeProgress> {
+  return withDailyChallengeUpdateLock(async () => {
+    const state = await ensureDailyChallengeProgressState();
+
+    if (!isAttemptLimitedChallenge(type)) {
+      return state.progress;
+    }
+
+    const currentEntry = state.progress[type];
+
+    if (
+      !currentEntry ||
+      currentEntry.completed ||
+      currentEntry.claimed ||
+      currentEntry.attemptsRemaining <= 0
+    ) {
+      return state.progress;
+    }
+
+    const nextProgress: DailyChallengeProgress = {
+      ...state.progress,
+      [type]: {
+        ...currentEntry,
+        attemptsRemaining: Math.max(0, currentEntry.attemptsRemaining - 1),
       },
     };
 

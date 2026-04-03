@@ -14,7 +14,10 @@ export function formatDuration(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
-export function useLiveElapsedSeconds(session: GameSession | null): number {
+export function useLiveElapsedSeconds(
+  session: GameSession | null,
+  isActive = true,
+): number {
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
     session ? getElapsedSeconds(session) : 0,
   );
@@ -28,7 +31,7 @@ export function useLiveElapsedSeconds(session: GameSession | null): number {
   useEffect(() => {
     const activeSession = sessionRef.current;
 
-    if (!activeSession || activeSession.status !== "playing") {
+    if (!isActive || !activeSession || activeSession.status !== "playing") {
       return undefined;
     }
 
@@ -45,7 +48,7 @@ export function useLiveElapsedSeconds(session: GameSession | null): number {
     return () => {
       clearInterval(interval);
     };
-  }, [session?.status, session?.startedAt]);
+  }, [isActive, session?.status, session?.startedAt]);
 
   return elapsedSeconds;
 }

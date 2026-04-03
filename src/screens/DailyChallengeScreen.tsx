@@ -20,6 +20,7 @@ import { useAppTheme } from "../context/ThemeContext";
 import { RootStackParamList } from "../navigation/types";
 import {
   DAILY_ALL_COMPLETE_BONUS_COINS,
+  DAILY_CHALLENGE_MAX_ATTEMPTS,
   DAILY_CHALLENGE_UNLOCK_LEVEL,
   DailyChallengeProgress,
   DailyChallengeType,
@@ -52,6 +53,8 @@ type ChallengeCardModel = {
   reward: number;
   status: ChallengeStatus;
   progressValue: number;
+  attemptsRemaining: number;
+  isAttemptLimited: boolean;
   progress: DailyChallengeProgress[DailyChallengeType];
   palette: ChallengePalette;
 };
@@ -93,10 +96,34 @@ const CHALLENGE_PALETTE_BY_TYPE: Record<DailyChallengeType, ChallengePalette> =
   };
 
 const EMPTY_DAILY_PROGRESS: DailyChallengeProgress = {
-  speed: { completed: false, claimed: false },
-  noHint: { completed: false, claimed: false },
-  mystery: { completed: false, claimed: false },
+  speed: {
+    completed: false,
+    claimed: false,
+    attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+  },
+  noHint: {
+    completed: false,
+    claimed: false,
+    attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+  },
+  mystery: {
+    completed: false,
+    claimed: false,
+    attemptsRemaining: DAILY_CHALLENGE_MAX_ATTEMPTS,
+  },
 };
+
+function isAttemptLimitedChallenge(type: DailyChallengeType): boolean {
+  return type === "speed" || type === "noHint";
+}
+
+function getAttemptsRemainingText(attemptsRemaining: number): string {
+  if (attemptsRemaining === 1) {
+    return "1 attempt remaining";
+  }
+
+  return `${attemptsRemaining} attempts remaining`;
+}
 
 function getChallengeStatus(
   progress: DailyChallengeProgress[DailyChallengeType],
@@ -214,6 +241,17 @@ function DailyChallengeCard({
         </Text>
       </View>
 
+      {card.isAttemptLimited ? (
+        <Text
+          style={[
+            styles.attemptsText,
+            card.attemptsRemaining <= 0 ? styles.attemptsLockedText : null,
+          ]}
+        >
+          {getAttemptsRemainingText(card.attemptsRemaining)}
+        </Text>
+      ) : null}
+
       <View style={styles.progressRow}>
         <View
           style={[
@@ -304,6 +342,8 @@ export default function DailyChallengeScreen({ navigation }: Props) {
         reward: getRewardCoinsForType(type),
         status: getChallengeStatus(progress),
         progressValue: getChallengeProgressValue(progress),
+        attemptsRemaining: progress.attemptsRemaining,
+        isAttemptLimited: isAttemptLimitedChallenge(type),
         progress,
         palette: CHALLENGE_PALETTE_BY_TYPE[type],
       };
@@ -431,25 +471,37 @@ export default function DailyChallengeScreen({ navigation }: Props) {
               </View>
             ) : (
               <View style={styles.challengeList}>
-                {cardModels.map((card) => (
-                  <View key={card.type}>
-                    <DailyChallengeCard
-                      card={card}
-                      claimLoading={claimingType === card.type}
-                      isAnyClaiming={claimingType !== null}
-                      onClaim={handleClaimReward}
-                      styles={styles}
-                    />
+                {cardModels.map((card) => {
+                  const noAttemptsLeft =
+                    card.isAttemptLimited &&
+                    !card.progress.completed &&
+                    card.attemptsRemaining <= 0;
 
-                    <CustomButton
-                      fullWidth
-                      label={`Play ${card.title}`}
-                      onPress={() => handleOpenChallengePuzzle(card.type)}
-                      style={styles.playButton}
-                      variant="secondary"
-                    />
-                  </View>
-                ))}
+                  return (
+                    <View key={card.type}>
+                      <DailyChallengeCard
+                        card={card}
+                        claimLoading={claimingType === card.type}
+                        isAnyClaiming={claimingType !== null}
+                        onClaim={handleClaimReward}
+                        styles={styles}
+                      />
+
+                      <CustomButton
+                        fullWidth
+                        disabled={noAttemptsLeft}
+                        label={
+                          noAttemptsLeft
+                            ? "No attempts left"
+                            : `Play ${card.title}`
+                        }
+                        onPress={() => handleOpenChallengePuzzle(card.type)}
+                        style={styles.playButton}
+                        variant="secondary"
+                      />
+                    </View>
+                  );
+                })}
 
                 <View style={styles.bonusCard}>
                   <View style={styles.bonusTopRow}>
@@ -621,6 +673,15 @@ function createDailyChallengeStyles(themeColors: {
     statusText: {
       fontSize: 13,
       fontWeight: "800",
+    },
+    attemptsText: {
+      marginTop: 8,
+      color: mutedText,
+      fontSize: 12,
+      fontWeight: "800",
+    },
+    attemptsLockedText: {
+      color: COLORS.danger,
     },
     statusNotStarted: {
       color: mutedText,

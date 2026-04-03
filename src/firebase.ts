@@ -1,6 +1,21 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import * as firebaseAuth from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+
+const { getAuth, initializeAuth } = firebaseAuth;
+
+type ReactNativePersistenceFactory = (storage: {
+  setItem(key: string, value: string): Promise<unknown>;
+  getItem(key: string): Promise<string | null>;
+  removeItem(key: string): Promise<unknown>;
+}) => firebaseAuth.Persistence;
+
+const getReactNativePersistence = (
+  firebaseAuth as typeof firebaseAuth & {
+    getReactNativePersistence?: ReactNativePersistenceFactory;
+  }
+).getReactNativePersistence;
 
 const firebaseConfig = {
   apiKey: "AIzaSyCK7xcQwLbtXMgT-VB8DdeABePSloQSczc",
@@ -14,5 +29,21 @@ const firebaseConfig = {
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-export const auth = getAuth(app);
+function createAuth() {
+  if (typeof getReactNativePersistence !== "function") {
+    return getAuth(app);
+  }
+
+  try {
+    const initializedAuth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+    return initializedAuth;
+  } catch {
+    // Fast refresh or repeated init should reuse the existing auth instance.
+    return getAuth(app);
+  }
+}
+
+export const auth = createAuth();
 export const db = getFirestore(app);

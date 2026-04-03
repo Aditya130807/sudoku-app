@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, {
   useCallback,
@@ -9,6 +10,7 @@ import React, {
 } from "react";
 import {
   Animated,
+  AppState,
   ImageBackground,
   Modal,
   ScrollView,
@@ -44,7 +46,11 @@ import {
   preloadInterstitialAd,
   showInterstitialAd,
 } from "../services/adService";
-import { markCompleted } from "../services/dailyChallengeService";
+import {
+  getDailyChallengeProgress,
+  markCompleted,
+  registerChallengeFailed,
+} from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
 import { gameStore, useGameStore } from "../store/gameStore";
 import { hexToRgba } from "../utils/colorUtils";
@@ -81,6 +87,9 @@ const MYSTERY_PREDEFINED_CELLS: [number, number][] = [
   [6, 2],
   [6, 6],
 ];
+
+let pausedAtCacheMs: number | null = null;
+let pausedAtCacheSessionKey: string | null = null;
 
 function getHintStateKey(row: number, col: number) {
   return `${row}-${col}`;
@@ -264,9 +273,29 @@ function getSafeLevelDefinition(levelId: number) {
   }
 }
 
+function getDailyChallengeMaxTimeSeconds(
+  baseTimeSeconds: number,
+  challengeType: "speed" | "noHint" | "mystery" | undefined,
+): number {
+  if (challengeType === "speed") {
+    return Math.max(0, baseTimeSeconds - 120);
+  }
+
+  return baseTimeSeconds;
+}
+
+function getAttemptsRemainingLabel(attemptsRemaining: number): string {
+  if (attemptsRemaining === 1) {
+    return "1 attempt remaining";
+  }
+
+  return `${attemptsRemaining} attempts remaining`;
+}
+
 export default function GameScreen({ navigation, route }: Props) {
   const { levelId } = route.params;
   const isDailyChallenge = route.params?.isDailyChallenge === true;
+  const isFocused = useIsFocused();
   const dailyChallengeType = route.params?.challengeType;
   const isMysteryDailyChallenge =
     isDailyChallenge && dailyChallengeType === "mystery";
@@ -294,10 +323,18 @@ export default function GameScreen({ navigation, route }: Props) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [appState, setAppState] = useState(AppState.currentState);
   const [isNotesMode, setIsNotesMode] = useState(false);
+  const [hasFailed, setHasFailed] = useState(false);
   const [revealIncorrectValues, setRevealIncorrectValues] = useState(false);
   const [hintHighlight, setHintHighlight] = useState<HintStateMap>({});
   const [hintErrors, setHintErrors] = useState<HintStateMap>({});
+  const [showChallengeFailureModal, setShowChallengeFailureModal] =
+    useState(false);
+  const [
+    challengeFailureAttemptsRemaining,
+    setChallengeFailureAttemptsRemaining,
+  ] = useState<number | null>(null);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [completionRewardCoins, setCompletionRewardCoins] = useState(0);
   const [completionRewardMessages, setCompletionRewardMessages] = useState<
@@ -308,8 +345,11 @@ export default function GameScreen({ navigation, route }: Props) {
   const [mysteryRevealedCellMap, setMysteryRevealedCellMap] =
     useState<MysteryCellMap>({});
   const lastDailyCompletionTrackingKeyRef = useRef<string | null>(null);
+  const lastChallengeFailureTrackingKeyRef = useRef<string | null>(null);
   const lastInterstitialCompletionKeyRef = useRef<string | null>(null);
   const lastWinFeedbackKeyRef = useRef<string | null>(null);
+  const pauseStartRef = useRef<number | null>(null);
+  const pauseAdjustedStartedAtRef = useRef<number | null>(null);
   const startTimeRef = useRef(Date.now());
   const completionAnimation = useRef(new Animated.Value(0)).current;
   const hintHighlightTimeoutsRef = useRef<
@@ -327,7 +367,17 @@ export default function GameScreen({ navigation, route }: Props) {
 
   const currentSession =
     activeGame && activeGame.levelId === levelId ? activeGame : null;
-  const elapsedSeconds = useLiveElapsedSeconds(currentSession ?? null);
+  const currentSessionRef = useRef(currentSession);
+  const isActive = isFocused && appState === "active";
+  const elapsedSeconds = useLiveElapsedSeconds(
+    currentSession ?? null,
+    isActive,
+  );
+  const isPauseAdjustedSessionStart =
+    !!currentSession &&
+    currentSession.status === "playing" &&
+    pauseAdjustedStartedAtRef.current !== null &&
+    currentSession.startedAt === pauseAdjustedStartedAtRef.current;
   const highlights = currentSession
     ? gameService.buildHighlights(currentSession, settings, {
         revealIncorrectValues:
@@ -363,6 +413,169 @@ export default function GameScreen({ navigation, route }: Props) {
     currentSessionStatus === "completed"
       ? (currentSession?.completedAt ?? null)
       : null;
+  const challengeAttemptTrackingKey = sessionStartKey ?? sessionCompletionKey;
+  const dailyChallengeMaxTimeSeconds = getDailyChallengeMaxTimeSeconds(
+    level?.targetTimeSeconds ?? 0,
+    isDailyChallenge ? dailyChallengeType : undefined,
+  );
+  const remainingTimeSeconds = Math.max(
+    0,
+    dailyChallengeMaxTimeSeconds - elapsedSeconds,
+  );
+  const showSpeedCountdown = isDailyChallenge && dailyChallengeType === "speed";
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      setAppState(nextState);
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        const session = currentSessionRef.current;
+
+        if (!session || session.status !== "playing") {
+          return;
+        }
+
+        if (pauseStartRef.current !== null) {
+          return;
+        }
+
+        const now = Date.now();
+        pauseStartRef.current = now;
+        pausedAtCacheMs = now;
+        pausedAtCacheSessionKey = `${session.levelId}-${session.startedAt}`;
+      };
+    }, []),
+  );
+
+  useEffect(() => {
+    if (appState === "active") {
+      return;
+    }
+
+    if (!currentSession || currentSession.status !== "playing") {
+      return;
+    }
+
+    if (pauseStartRef.current !== null) {
+      return;
+    }
+
+    const now = Date.now();
+    pauseStartRef.current = now;
+    pausedAtCacheMs = now;
+    pausedAtCacheSessionKey = `${currentSession.levelId}-${currentSession.startedAt}`;
+  }, [appState, currentSession]);
+
+  useEffect(() => {
+    if (!isActive || !currentSession || currentSession.status !== "playing") {
+      return;
+    }
+
+    const sessionKey = `${currentSession.levelId}-${currentSession.startedAt}`;
+    const pausedAtFromCache =
+      pausedAtCacheSessionKey === sessionKey ? pausedAtCacheMs : null;
+    const pausedAt = pauseStartRef.current ?? pausedAtFromCache;
+
+    if (pausedAt === null) {
+      return;
+    }
+
+    const pausedDuration = Date.now() - pausedAt;
+    pauseStartRef.current = null;
+    pausedAtCacheMs = null;
+    pausedAtCacheSessionKey = null;
+
+    if (pausedDuration <= 0) {
+      return;
+    }
+
+    let adjustedStartedAt: number | null = null;
+
+    gameStore.setState((state) => {
+      const activeSession = state.activeGame;
+
+      if (
+        !activeSession ||
+        activeSession.levelId !== levelId ||
+        activeSession.status !== "playing"
+      ) {
+        return state;
+      }
+
+      adjustedStartedAt = activeSession.startedAt + pausedDuration;
+
+      return {
+        ...state,
+        activeGame: {
+          ...activeSession,
+          startedAt: adjustedStartedAt,
+        },
+      };
+    });
+
+    if (adjustedStartedAt !== null) {
+      pauseAdjustedStartedAtRef.current = adjustedStartedAt;
+    }
+  }, [currentSession, isActive, levelId]);
+
+  useEffect(() => {
+    if (!currentSession || currentSession.status !== "playing") {
+      pauseAdjustedStartedAtRef.current = null;
+      return;
+    }
+
+    if (
+      pauseAdjustedStartedAtRef.current !== null &&
+      currentSession.startedAt !== pauseAdjustedStartedAtRef.current
+    ) {
+      pauseAdjustedStartedAtRef.current = null;
+    }
+  }, [currentSession?.startedAt, currentSession?.status]);
+
+  const triggerChallengeFail = useCallback(
+    (type: "speed" | "noHint") => {
+      if (!challengeAttemptTrackingKey) {
+        return;
+      }
+
+      if (
+        lastChallengeFailureTrackingKeyRef.current ===
+        challengeAttemptTrackingKey
+      ) {
+        return;
+      }
+
+      lastChallengeFailureTrackingKeyRef.current = challengeAttemptTrackingKey;
+      setShowCompletionModal(false);
+      setNotice(null);
+
+      void (async () => {
+        try {
+          const updatedProgress = await registerChallengeFailed(type);
+          setChallengeFailureAttemptsRemaining(
+            updatedProgress[type].attemptsRemaining,
+          );
+        } catch {
+          setChallengeFailureAttemptsRemaining(null);
+        } finally {
+          setShowChallengeFailureModal(true);
+        }
+      })();
+    },
+    [challengeAttemptTrackingKey],
+  );
 
   const checkMysteryReveal = useCallback(
     (row: number, col: number, board: Board, solution: Board) => {
@@ -466,6 +679,8 @@ export default function GameScreen({ navigation, route }: Props) {
   ]);
 
   useEffect(() => {
+    let isDisposed = false;
+
     if (!level || !gridConfig) {
       setLoadError("This level is unavailable right now.");
       setLoading(false);
@@ -474,22 +689,51 @@ export default function GameScreen({ navigation, route }: Props) {
 
     setLoadError(null);
 
-    try {
-      const result = gameService.startLevel(levelId, {
-        allowLocked: isDailyChallenge,
-        skipProgressTracking: isDailyChallenge,
-        isDailyChallenge,
-        challengeType: dailyChallengeType,
-      });
+    void (async () => {
+      try {
+        if (
+          isDailyChallenge &&
+          (dailyChallengeType === "speed" || dailyChallengeType === "noHint")
+        ) {
+          const progress = await getDailyChallengeProgress();
+          const challengeProgress = progress[dailyChallengeType];
 
-      if (!result.ok) {
-        setLoadError(result.message ?? "Unable to start this level.");
+          if (
+            challengeProgress &&
+            challengeProgress.attemptsRemaining <= 0 &&
+            !challengeProgress.completed
+          ) {
+            if (!isDisposed) {
+              setLoadError("No attempts left for this challenge today.");
+            }
+            return;
+          }
+        }
+
+        const result = gameService.startLevel(levelId, {
+          allowLocked: isDailyChallenge,
+          skipProgressTracking: isDailyChallenge,
+          isDailyChallenge,
+          challengeType: dailyChallengeType,
+        });
+
+        if (!result.ok && !isDisposed) {
+          setLoadError(result.message ?? "Unable to start this level.");
+        }
+      } catch {
+        if (!isDisposed) {
+          setLoadError("Unable to start this level.");
+        }
+      } finally {
+        if (!isDisposed) {
+          setLoading(false);
+        }
       }
-    } catch {
-      setLoadError("Unable to start this level.");
-    } finally {
-      setLoading(false);
-    }
+    })();
+
+    return () => {
+      isDisposed = true;
+    };
   }, [dailyChallengeType, gridConfig, isDailyChallenge, level, levelId]);
 
   useEffect(() => {
@@ -497,8 +741,12 @@ export default function GameScreen({ navigation, route }: Props) {
       return;
     }
 
+    if (isPauseAdjustedSessionStart) {
+      return;
+    }
+
     startTimeRef.current = Date.now();
-  }, [sessionStartKey]);
+  }, [isPauseAdjustedSessionStart, sessionStartKey]);
 
   useEffect(() => {
     if (!isMysteryDailyChallenge || !currentSession || !gridConfig) {
@@ -553,18 +801,26 @@ export default function GameScreen({ navigation, route }: Props) {
   }, []);
 
   useEffect(() => {
+    if (isPauseAdjustedSessionStart) {
+      return;
+    }
+
     setRevealIncorrectValues(false);
+    setHasFailed(false);
     setHintHighlight({});
     setHintErrors({});
     hintHighlightTimeoutsRef.current.forEach((timeout) => {
       clearTimeout(timeout);
     });
     hintHighlightTimeoutsRef.current.clear();
+    setShowChallengeFailureModal(false);
+    setChallengeFailureAttemptsRemaining(null);
     setShowCompletionModal(false);
     setIsNotesMode(false);
     setCompletionRewardCoins(0);
     setCompletionRewardMessages([]);
-  }, [currentSession?.startedAt, levelId]);
+    lastChallengeFailureTrackingKeyRef.current = null;
+  }, [currentSession?.startedAt, isPauseAdjustedSessionStart, levelId]);
 
   useEffect(() => {
     const highlightTimeouts = hintHighlightTimeoutsRef.current;
@@ -624,6 +880,41 @@ export default function GameScreen({ navigation, route }: Props) {
   }, [currentSession?.completedAt, currentSession?.status]);
 
   useEffect(() => {
+    if (
+      !isDailyChallengeHydrated ||
+      !isDailyChallenge ||
+      !isActive ||
+      !currentSession ||
+      currentSession.status !== "playing" ||
+      !sessionStartKey
+    ) {
+      return;
+    }
+
+    if (dailyChallengeType !== "speed" && dailyChallengeType !== "noHint") {
+      return;
+    }
+
+    if (hasFailed || elapsedSeconds <= dailyChallengeMaxTimeSeconds) {
+      return;
+    }
+
+    setHasFailed(true);
+    triggerChallengeFail(dailyChallengeType);
+  }, [
+    currentSession,
+    dailyChallengeMaxTimeSeconds,
+    dailyChallengeType,
+    elapsedSeconds,
+    hasFailed,
+    isActive,
+    isDailyChallenge,
+    isDailyChallengeHydrated,
+    sessionStartKey,
+    triggerChallengeFail,
+  ]);
+
+  useEffect(() => {
     if (!sessionCompletionKey) {
       return;
     }
@@ -638,7 +929,11 @@ export default function GameScreen({ navigation, route }: Props) {
   }, [sessionCompletionKey]);
 
   useEffect(() => {
-    if (!isDailyChallengeHydrated || !sessionStartKey) {
+    if (
+      !isDailyChallengeHydrated ||
+      !sessionStartKey ||
+      isPauseAdjustedSessionStart
+    ) {
       return;
     }
 
@@ -649,7 +944,12 @@ export default function GameScreen({ navigation, route }: Props) {
     }
 
     setNotice(claimedRewards.map((result) => result.message).join(" "));
-  }, [claimStartRewards, isDailyChallengeHydrated, sessionStartKey]);
+  }, [
+    claimStartRewards,
+    isDailyChallengeHydrated,
+    isPauseAdjustedSessionStart,
+    sessionStartKey,
+  ]);
 
   useEffect(() => {
     if (!isDailyChallengeHydrated || !sessionCompletionKey) {
@@ -702,20 +1002,24 @@ export default function GameScreen({ navigation, route }: Props) {
           currentSession.elapsedSeconds > 0
             ? currentSession.elapsedSeconds
             : (Date.now() - startTimeRef.current) / 1000;
-        const maxSpeedSeconds = (level?.targetTimeSeconds ?? 0) - 120;
 
         if (dailyChallengeType === "speed") {
-          if (timeTakenSeconds <= maxSpeedSeconds) {
+          if (timeTakenSeconds <= dailyChallengeMaxTimeSeconds) {
             await markCompleted("speed");
           } else {
-            setNotice(
-              `Complete in ${formatDuration(maxSpeedSeconds)} or less to earn reward`,
-            );
+            setHasFailed(true);
+            triggerChallengeFail("speed");
           }
           return;
         }
 
         if (dailyChallengeType === "noHint") {
+          if (timeTakenSeconds > dailyChallengeMaxTimeSeconds) {
+            setHasFailed(true);
+            triggerChallengeFail("noHint");
+            return;
+          }
+
           if (currentSession.hintsUsed === 0) {
             await markCompleted("noHint");
           }
@@ -731,11 +1035,12 @@ export default function GameScreen({ navigation, route }: Props) {
     })();
   }, [
     currentSession,
+    dailyChallengeMaxTimeSeconds,
     dailyChallengeType,
     isDailyChallenge,
     isDailyChallengeHydrated,
-    level?.targetTimeSeconds,
     sessionCompletionKey,
+    triggerChallengeFail,
   ]);
 
   useEffect(() => {
@@ -984,6 +1289,11 @@ export default function GameScreen({ navigation, route }: Props) {
     navigation.navigate("Home");
   };
 
+  const handleChallengeFailureDismiss = () => {
+    setShowChallengeFailureModal(false);
+    navigation.goBack();
+  };
+
   if (loading) {
     return <LoadingScreen />;
   }
@@ -1062,21 +1372,25 @@ export default function GameScreen({ navigation, route }: Props) {
 
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Time</Text>
+            <Text style={styles.statLabel}>
+              {showSpeedCountdown ? "Time Left" : "Time"}
+            </Text>
             <Text style={styles.statValue}>
-              {formatDuration(elapsedSeconds)}
+              {formatDuration(
+                showSpeedCountdown ? remainingTimeSeconds : elapsedSeconds,
+              )}
             </Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Hints Left</Text>
             <Text style={styles.statValue}>
-              {currentSession.hintsRemaining}
+              {disableHints ? 0 : currentSession.hintsRemaining}
             </Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Goal</Text>
             <Text style={styles.statValue}>
-              {formatDuration(level.targetTimeSeconds)}
+              {formatDuration(dailyChallengeMaxTimeSeconds)}
             </Text>
           </View>
         </View>
@@ -1144,9 +1458,45 @@ export default function GameScreen({ navigation, route }: Props) {
             onHint={handleHint}
             onGuide={() => navigation.navigate("Tutorial", { fromGame: true })}
             disableActions={currentSession.status !== "playing"}
+            disableHint={disableHints}
           />
         </View>
       </ScrollView>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={handleChallengeFailureDismiss}
+        transparent
+        visible={showChallengeFailureModal}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Challenge Failed</Text>
+            <Text style={styles.modalSubtitle}>
+              Challenge Failed. Please try again.
+            </Text>
+
+            {typeof challengeFailureAttemptsRemaining === "number" ? (
+              <Text style={styles.modalBody}>
+                {getAttemptsRemainingLabel(challengeFailureAttemptsRemaining)}
+              </Text>
+            ) : null}
+
+            {challengeFailureAttemptsRemaining === 0 ? (
+              <Text style={styles.modalBody}>No attempts left.</Text>
+            ) : null}
+
+            <View style={styles.modalActions}>
+              <CustomButton
+                fullWidth
+                label="Back to Challenges"
+                onPress={handleChallengeFailureDismiss}
+                style={styles.modalActionButton}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         animationType="fade"
