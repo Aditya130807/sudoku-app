@@ -405,18 +405,43 @@ export default function DailyChallengeScreen({ navigation }: Props) {
   );
 
   const handleOpenChallengePuzzle = useCallback(
-    (type: DailyChallengeType) => {
+    async (type: DailyChallengeType) => {
       if (!dailyPuzzleSet) {
         return;
+      }
+
+      let attemptsRemaining = dailyProgress[type]?.attemptsRemaining;
+
+      if (isAttemptLimitedChallenge(type)) {
+        try {
+          const latestProgress = await getDailyChallengeProgress();
+          const latestEntry = latestProgress[type];
+
+          attemptsRemaining = latestEntry?.attemptsRemaining;
+          setDailyProgress(latestProgress);
+
+          if (
+            latestEntry &&
+            latestEntry.attemptsRemaining <= 0 &&
+            !latestEntry.completed
+          ) {
+            setNotice("No attempts left for this challenge today.");
+            return;
+          }
+        } catch {
+          // Keep challenge launch resilient even if progress refresh fails.
+        }
       }
 
       navigation.navigate("Game", {
         levelId: dailyPuzzleSet[type],
         isDailyChallenge: true,
         challengeType: type,
+        dailyChallengeAttemptsRemaining:
+          typeof attemptsRemaining === "number" ? attemptsRemaining : undefined,
       });
     },
-    [dailyPuzzleSet, navigation],
+    [dailyProgress, dailyPuzzleSet, navigation],
   );
 
   return (

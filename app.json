@@ -31,9 +31,10 @@
     },
     "plugins": [
       [
-        "react-native-google-mobile-ads",
+        "./plugins/with-admob-app-ids",
         {
-          "androidAppId": "ca-app-pub-8048301971162422~8360590993"
+          "androidAppId": "ca-app-pub-8048301971162422~8360590993",
+          "iosAppId": ""
         }
       ],
       [
@@ -49,7 +50,8 @@
         }
       ],
       "expo-secure-store",
-      "expo-audio"
+      "expo-audio",
+      "expo-asset"
     ],
     "extra": {
       "privacyPolicyUrl": "https://aditya130807.github.io/sudoku-ryve-privacy-policy/privacy-policy",

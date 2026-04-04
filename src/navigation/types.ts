@@ -10,6 +10,7 @@ export type RootStackParamList = {
     levelId: number;
     isDailyChallenge?: boolean;
     challengeType?: "speed" | "noHint" | "mystery";
+    dailyChallengeAttemptsRemaining?: number;
   };
   Settings: undefined;
   ThemeStore: undefined;

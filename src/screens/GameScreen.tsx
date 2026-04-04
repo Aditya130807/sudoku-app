@@ -47,6 +47,7 @@ import {
   showInterstitialAd,
 } from "../services/adService";
 import {
+  DAILY_CHALLENGE_MAX_ATTEMPTS,
   getDailyChallengeProgress,
   markCompleted,
   registerChallengeFailed,
@@ -297,9 +298,16 @@ export default function GameScreen({ navigation, route }: Props) {
   const isDailyChallenge = route.params?.isDailyChallenge === true;
   const isFocused = useIsFocused();
   const dailyChallengeType = route.params?.challengeType;
+  const dailyChallengeAttemptsRemaining =
+    route.params?.dailyChallengeAttemptsRemaining;
   const isMysteryDailyChallenge =
     isDailyChallenge && dailyChallengeType === "mystery";
   const disableHints = isDailyChallenge && dailyChallengeType === "noHint";
+  const isDailyRetryAttempt =
+    isDailyChallenge &&
+    (dailyChallengeType === "speed" || dailyChallengeType === "noHint") &&
+    typeof dailyChallengeAttemptsRemaining === "number" &&
+    dailyChallengeAttemptsRemaining < DAILY_CHALLENGE_MAX_ATTEMPTS;
   const { width: windowWidth } = useWindowDimensions();
   const boardSize = Math.min(windowWidth - 32, 360);
   const framedBoardSize = boardSize + FRAME_THICKNESS * 2;
@@ -405,6 +413,7 @@ export default function GameScreen({ navigation, route }: Props) {
     !selectedCell ||
     selectedCellLocked;
   const currentSessionStatus = currentSession?.status ?? null;
+  const currentSessionStartedAt = currentSession?.startedAt ?? null;
   const sessionStartKey =
     currentSessionStatus === "playing" && currentSession
       ? `${currentSession.levelId}-${currentSession.startedAt}`
@@ -531,18 +540,18 @@ export default function GameScreen({ navigation, route }: Props) {
   }, [currentSession, isActive, levelId]);
 
   useEffect(() => {
-    if (!currentSession || currentSession.status !== "playing") {
+    if (currentSessionStatus !== "playing") {
       pauseAdjustedStartedAtRef.current = null;
       return;
     }
 
     if (
       pauseAdjustedStartedAtRef.current !== null &&
-      currentSession.startedAt !== pauseAdjustedStartedAtRef.current
+      currentSessionStartedAt !== pauseAdjustedStartedAtRef.current
     ) {
       pauseAdjustedStartedAtRef.current = null;
     }
-  }, [currentSession?.startedAt, currentSession?.status]);
+  }, [currentSessionStartedAt, currentSessionStatus]);
 
   const triggerChallengeFail = useCallback(
     (type: "speed" | "noHint") => {
@@ -711,6 +720,7 @@ export default function GameScreen({ navigation, route }: Props) {
         }
 
         const result = gameService.startLevel(levelId, {
+          forceNew: isDailyRetryAttempt,
           allowLocked: isDailyChallenge,
           skipProgressTracking: isDailyChallenge,
           isDailyChallenge,
@@ -734,7 +744,14 @@ export default function GameScreen({ navigation, route }: Props) {
     return () => {
       isDisposed = true;
     };
-  }, [dailyChallengeType, gridConfig, isDailyChallenge, level, levelId]);
+  }, [
+    dailyChallengeType,
+    gridConfig,
+    isDailyChallenge,
+    isDailyRetryAttempt,
+    level,
+    levelId,
+  ]);
 
   useEffect(() => {
     if (!sessionStartKey) {
