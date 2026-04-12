@@ -151,7 +151,7 @@ gradle.taskGraph.whenReady { taskGraph ->
         taskGraph.hasTask(':app:bundleRelease')
     ) {
         if (android.signingConfigs.release.storeFile == null) {
-            throw new GradleException(
+            throw new RuntimeException(
                 'Release signing is not configured. Set MYAPP_UPLOAD_* in gradle.properties or use EAS-managed credentials.'
             )
         }
