@@ -1,6 +1,6 @@
-import { onAuthStateChanged, type User } from "firebase/auth";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 
 import { AuthStateProvider } from "./src/context/AuthStateContext";
 import { CoinProvider } from "./src/context/CoinContext";
@@ -9,10 +9,8 @@ import { ThemeProvider } from "./src/context/ThemeContext";
 import { auth } from "./src/firebase";
 import AppNavigator from "./src/navigation/AppNavigator";
 import LoadingScreen from "./src/screens/LoadingScreen";
-import {
-  isAuthMigrationInProgress,
-  subscribeToAuthMigration,
-} from "./src/services/authMigrationGate";
+import { initializeAds, safeInitializeConsent } from "./src/services/adService";
+import { hasRecentInteractiveAuthAttempt } from "./src/services/authService";
 import { gameService } from "./src/services/gameService";
 import { PersistedUserDataSnapshot } from "./src/services/storageService";
 import {
@@ -29,11 +27,11 @@ import {
 } from "./utils/soundManager";
 
 export default function App() {
-  const [authInitialized, setAuthInitialized] = useState(false);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [isAuthLoadTimedOut, setIsAuthLoadTimedOut] = useState(false);
-  const [isMigrating, setIsMigrating] = useState(isAuthMigrationInProgress());
+  const [authResolved, setAuthResolved] = useState(false);
+  const [consentResolved, setConsentResolved] = useState(false);
   const [isGameStateHydrated, setIsGameStateHydrated] = useState(false);
+  const [requiresEmailVerification, setRequiresEmailVerification] =
+    useState(false);
   const [authSyncVersion, setAuthSyncVersion] = useState(0);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [latestUserData, setLatestUserData] =
@@ -41,11 +39,47 @@ export default function App() {
   const [userDataLoadMessage, setUserDataLoadMessage] = useState<string | null>(
     null,
   );
-  const authReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
   const lastProgressSignatureRef = useRef("");
   const lastStatsSignatureRef = useRef("");
+
+  useEffect(() => {
+    let isDisposed = false;
+    let consentTimer: ReturnType<typeof setTimeout> | null = null;
+
+    consentTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          if (Platform.OS === "android") {
+            await safeInitializeConsent();
+          }
+        } catch (error) {
+          console.warn("Consent init failed", error);
+        } finally {
+          if (!isDisposed) {
+            setConsentResolved(true);
+          }
+        }
+      })();
+    }, 500);
+
+    return () => {
+      isDisposed = true;
+
+      if (consentTimer) {
+        clearTimeout(consentTimer);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!consentResolved) {
+      return;
+    }
+
+    void initializeAds().catch(() => {
+      // Keep startup resilient if ad SDK warm-up fails.
+    });
+  }, [consentResolved]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -93,125 +127,100 @@ export default function App() {
 
   useEffect(() => {
     let isDisposed = false;
-    let authSyncVersion = 0;
-    let hasResolvedOnce = false;
-    let initialNullGraceTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const clearAuthReadyTimeout = () => {
-      if (!authReadyTimeoutRef.current) {
-        return;
-      }
-
-      clearTimeout(authReadyTimeoutRef.current);
-      authReadyTimeoutRef.current = null;
-    };
-
-    const clearInitialNullGraceTimeout = () => {
-      if (!initialNullGraceTimeout) {
-        return;
-      }
-
-      clearTimeout(initialNullGraceTimeout);
-      initialNullGraceTimeout = null;
-    };
+    let authEventVersion = 0;
 
     const resolveAuthState = (user: User | null) => {
-      authSyncVersion += 1;
-      const currentSyncVersion = authSyncVersion;
-      clearAuthReadyTimeout();
-      setIsAuthReady(false);
-      setIsAuthLoadTimedOut(false);
-      setAuthSyncVersion(currentSyncVersion);
-      setAuthUserId(user?.uid ?? null);
-      setLatestUserData(null);
-      setUserDataLoadMessage(null);
-
-      authReadyTimeoutRef.current = setTimeout(() => {
-        if (isDisposed || currentSyncVersion !== authSyncVersion) {
-          return;
-        }
-
-        setIsAuthLoadTimedOut(true);
-        setIsAuthReady(true);
-        setAuthInitialized(true);
-      }, 5000);
+      authEventVersion += 1;
+      const currentEventVersion = authEventVersion;
 
       void (async () => {
+        let resolvedUser: User | null = user;
+        let isResolvedUserUnverified = false;
+        let shouldRequireVerification = false;
+        let nextAuthUserId: string | null = null;
+        let nextUserData: PersistedUserDataSnapshot | null = null;
+        let nextUserDataLoadMessage: string | null = null;
+
         try {
-          if (user) {
+          if (resolvedUser) {
+            try {
+              await resolvedUser.reload();
+            } catch {
+              // Keep auth startup resilient when refresh fails temporarily.
+            }
+
+            resolvedUser = auth.currentUser ?? resolvedUser;
+            isResolvedUserUnverified = !resolvedUser.emailVerified;
+
+            if (isResolvedUserUnverified) {
+              const shouldRouteVerification = hasRecentInteractiveAuthAttempt();
+              shouldRequireVerification = shouldRouteVerification;
+
+              if (!shouldRouteVerification) {
+                try {
+                  await signOut(auth);
+                } catch {
+                  // Keep startup stable if stale-session cleanup fails.
+                }
+
+                resolvedUser = null;
+                isResolvedUserUnverified = false;
+              }
+            }
+          }
+
+          if (isDisposed || currentEventVersion !== authEventVersion) {
+            return;
+          }
+
+          nextAuthUserId = isResolvedUserUnverified
+            ? null
+            : (resolvedUser?.uid ?? null);
+
+          if (resolvedUser && !isResolvedUserUnverified) {
             userStore.setUser({
-              id: user.uid,
-              email: user.email,
+              id: resolvedUser.uid,
+              email: resolvedUser.email,
             });
-          } else {
+          } else if (userStore.getState().mode === "signed_in") {
             userStore.resetUser();
           }
 
-          const loadResult = await loadUserData(user?.uid ?? null);
+          const loadResult = await loadUserData(nextAuthUserId);
 
-          if (isDisposed || currentSyncVersion !== authSyncVersion) {
+          if (isDisposed || currentEventVersion !== authEventVersion) {
             return;
           }
 
           hydrateStoresFromUserData(loadResult.data);
-          setLatestUserData(loadResult.data);
+          nextUserData = loadResult.data;
         } catch {
-          if (user) {
-            setUserDataLoadMessage("Failed to load data, retry");
-          } else {
+          if (resolvedUser && !shouldRequireVerification) {
+            nextUserDataLoadMessage = "Failed to load data, retry";
+          } else if (userStore.getState().mode === "signed_in") {
             userStore.resetUser();
           }
         } finally {
-          if (!isDisposed && currentSyncVersion === authSyncVersion) {
-            clearAuthReadyTimeout();
-            setIsAuthLoadTimedOut(false);
-            setIsAuthReady(true);
-            setAuthInitialized(true);
+          if (!isDisposed && currentEventVersion === authEventVersion) {
+            setRequiresEmailVerification(shouldRequireVerification);
+            setAuthUserId(nextAuthUserId);
+            setLatestUserData(nextUserData);
+            setUserDataLoadMessage(nextUserDataLoadMessage);
+            setAuthSyncVersion(currentEventVersion);
+            setAuthResolved(true);
           }
         }
       })();
     };
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      clearInitialNullGraceTimeout();
-
-      if (!hasResolvedOnce && !user) {
-        hasResolvedOnce = true;
-
-        initialNullGraceTimeout = setTimeout(() => {
-          if (isDisposed) {
-            return;
-          }
-
-          if (auth.currentUser) {
-            resolveAuthState(auth.currentUser);
-            return;
-          }
-
-          resolveAuthState(null);
-        }, 700);
-        return;
-      }
-
-      hasResolvedOnce = true;
-
       resolveAuthState(user);
     });
 
     return () => {
       isDisposed = true;
-      clearInitialNullGraceTimeout();
-      clearAuthReadyTimeout();
       unsubscribe();
     };
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = subscribeToAuthMigration(() => {
-      setIsMigrating(isAuthMigrationInProgress());
-    });
-
-    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -230,7 +239,7 @@ export default function App() {
   }, [userDataLoadMessage]);
 
   useEffect(() => {
-    if (!isAuthReady) {
+    if (!authResolved) {
       return;
     }
 
@@ -287,7 +296,7 @@ export default function App() {
       unsubscribeGame();
       unsubscribeUser();
     };
-  }, [isAuthReady]);
+  }, [authResolved]);
 
   return (
     <AuthStateProvider
@@ -300,20 +309,12 @@ export default function App() {
       <CoinProvider>
         <DailyChallengeProvider>
           <ThemeProvider>
-            {authInitialized &&
-            isAuthReady &&
-            !isMigrating &&
-            isGameStateHydrated ? (
-              <AppNavigator />
-            ) : (
-              <LoadingScreen
-                showFallback={isAuthLoadTimedOut}
-                subtitle={
-                  isAuthLoadTimedOut
-                    ? "Startup is taking longer than expected. Continuing with limited sync..."
-                    : "Preparing your puzzle..."
-                }
+            {authResolved && isGameStateHydrated ? (
+              <AppNavigator
+                requiresEmailVerification={requiresEmailVerification}
               />
+            ) : (
+              <LoadingScreen subtitle="Preparing your puzzle..." />
             )}
           </ThemeProvider>
         </DailyChallengeProvider>

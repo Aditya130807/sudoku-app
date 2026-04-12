@@ -363,18 +363,25 @@ export default function GameScreen({ navigation, route }: Props) {
   const hintHighlightTimeoutsRef = useRef<
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
-  const claimStartRewards = useCallback(
-    () => registerGameStarted().filter((result) => result.ok),
-    [registerGameStarted],
-  );
+  const claimStartRewards = useCallback(async () => {
+    const results = await registerGameStarted();
+    return results.filter((result) => result.ok);
+  }, [registerGameStarted]);
   const claimWinRewards = useCallback(
-    (currentLevelId: number) =>
-      registerGameWon(currentLevelId).filter((result) => result.ok),
+    async (currentLevelId: number) => {
+      const results = await registerGameWon(currentLevelId);
+      return results.filter((result) => result.ok);
+    },
     [registerGameWon],
   );
 
   const currentSession =
-    activeGame && activeGame.levelId === levelId ? activeGame : null;
+    activeGame &&
+    activeGame.levelId === levelId &&
+    Boolean(activeGame.isDailyChallenge) === isDailyChallenge &&
+    (!isDailyChallenge || activeGame.challengeType === dailyChallengeType)
+      ? activeGame
+      : null;
   const currentSessionRef = useRef(currentSession);
   const isActive = isFocused && appState === "active";
   const elapsedSeconds = useLiveElapsedSeconds(
@@ -954,13 +961,21 @@ export default function GameScreen({ navigation, route }: Props) {
       return;
     }
 
-    const claimedRewards = claimStartRewards();
+    let isDisposed = false;
 
-    if (!claimedRewards.length) {
-      return;
-    }
+    void (async () => {
+      const claimedRewards = await claimStartRewards();
 
-    setNotice(claimedRewards.map((result) => result.message).join(" "));
+      if (isDisposed || !claimedRewards.length) {
+        return;
+      }
+
+      setNotice(claimedRewards.map((result) => result.message).join(" "));
+    })();
+
+    return () => {
+      isDisposed = true;
+    };
   }, [
     claimStartRewards,
     isDailyChallengeHydrated,
@@ -973,21 +988,33 @@ export default function GameScreen({ navigation, route }: Props) {
       return;
     }
 
-    const claimedRewards = claimWinRewards(levelId);
+    let isDisposed = false;
 
-    if (!claimedRewards.length) {
-      setCompletionRewardCoins(0);
-      setCompletionRewardMessages([]);
-      return;
-    }
+    void (async () => {
+      const claimedRewards = await claimWinRewards(levelId);
 
-    setCompletionRewardCoins(
-      claimedRewards.reduce(
-        (rewardSum, result) => rewardSum + result.reward,
-        0,
-      ),
-    );
-    setCompletionRewardMessages(claimedRewards.map((result) => result.message));
+      if (isDisposed || !claimedRewards.length) {
+        if (!isDisposed) {
+          setCompletionRewardCoins(0);
+          setCompletionRewardMessages([]);
+        }
+        return;
+      }
+
+      setCompletionRewardCoins(
+        claimedRewards.reduce(
+          (rewardSum, result) => rewardSum + result.reward,
+          0,
+        ),
+      );
+      setCompletionRewardMessages(
+        claimedRewards.map((result) => result.message),
+      );
+    })();
+
+    return () => {
+      isDisposed = true;
+    };
   }, [
     claimWinRewards,
     isDailyChallengeHydrated,
@@ -1022,7 +1049,9 @@ export default function GameScreen({ navigation, route }: Props) {
 
         if (dailyChallengeType === "speed") {
           if (timeTakenSeconds <= dailyChallengeMaxTimeSeconds) {
-            await markCompleted("speed");
+            await markCompleted("speed", {
+              playedLevelId: levelId,
+            });
           } else {
             setHasFailed(true);
             triggerChallengeFail("speed");
@@ -1038,13 +1067,17 @@ export default function GameScreen({ navigation, route }: Props) {
           }
 
           if (currentSession.hintsUsed === 0) {
-            await markCompleted("noHint");
+            await markCompleted("noHint", {
+              playedLevelId: levelId,
+            });
           }
           return;
         }
 
         if (dailyChallengeType === "mystery") {
-          await markCompleted("mystery");
+          await markCompleted("mystery", {
+            playedLevelId: levelId,
+          });
         }
       } catch {
         // Keep game completion stable if daily completion tracking fails.
@@ -1056,6 +1089,7 @@ export default function GameScreen({ navigation, route }: Props) {
     dailyChallengeType,
     isDailyChallenge,
     isDailyChallengeHydrated,
+    levelId,
     sessionCompletionKey,
     triggerChallengeFail,
   ]);

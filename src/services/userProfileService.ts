@@ -1,8 +1,14 @@
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 
-import { db } from "../firebase";
+import { auth, db } from "../firebase";
 import { LevelProgress } from "../game/types";
 import { GuestStatsSnapshot, storageService } from "./storageService";
+import {
+  applyCoinDeltaForCurrentUser,
+  type CoinMutationReason,
+} from "./userDataService";
+
+const MAX_COIN_MUTATION_DELTA = 5000;
 
 function normalizeCoins(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -10,6 +16,56 @@ function normalizeCoins(value: unknown): number {
   }
 
   return Math.floor(value);
+}
+
+function toOperationToken(value: string): string {
+  const sanitized = value.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 48);
+  return sanitized || "op";
+}
+
+function createGuestMigrationOperationPrefix(userId: string, guestId: string) {
+  return `guest-migration-${toOperationToken(userId)}-${toOperationToken(guestId)}`;
+}
+
+function createProfileSeedOperationPrefix(userId: string) {
+  return `profile-seed-${toOperationToken(userId)}`;
+}
+
+async function applyCoinDeltaInChunksForCurrentUser(
+  userId: string,
+  totalDelta: number,
+  reason: CoinMutationReason,
+  operationPrefix: string,
+): Promise<void> {
+  let remainingDelta = Math.trunc(totalDelta);
+
+  if (remainingDelta === 0) {
+    return;
+  }
+
+  const activeUserId = auth.currentUser?.uid ?? null;
+
+  if (!activeUserId || activeUserId !== userId) {
+    throw new Error("Authenticated user mismatch during coin mutation.");
+  }
+
+  let chunkIndex = 0;
+
+  while (remainingDelta !== 0) {
+    chunkIndex += 1;
+    const chunkAmount = Math.min(
+      Math.abs(remainingDelta),
+      MAX_COIN_MUTATION_DELTA,
+    );
+    const chunkDelta = remainingDelta > 0 ? chunkAmount : -chunkAmount;
+
+    await applyCoinDeltaForCurrentUser(chunkDelta, {
+      reason,
+      operationId: `${operationPrefix}-${chunkIndex}`,
+    });
+
+    remainingDelta -= chunkDelta;
+  }
 }
 
 function getUserDoc(userId: string) {
@@ -116,12 +172,24 @@ export async function migrateGuestSessionToUserProfile(
   const userDoc = getUserDoc(userId);
   const existingUserSnapshot = await getDoc(userDoc);
   const safeGuestCoins = normalizeCoins(guestSnapshot.coins);
+  const guestMigrationOperationPrefix = createGuestMigrationOperationPrefix(
+    userId,
+    guestSnapshot.guestId,
+  );
 
   if (!existingUserSnapshot.exists()) {
+    if (safeGuestCoins > 0) {
+      await applyCoinDeltaInChunksForCurrentUser(
+        userId,
+        safeGuestCoins,
+        "guest_migration",
+        guestMigrationOperationPrefix,
+      );
+    }
+
     await setDoc(
       userDoc,
       {
-        coins: safeGuestCoins,
         progress: guestSnapshot.progress,
         stats: guestSnapshot.stats,
         createdAt: serverTimestamp(),
@@ -144,7 +212,6 @@ export async function migrateGuestSessionToUserProfile(
   }
 
   const remoteCoins = normalizeCoins(existingData.coins);
-  const mergedCoins = Math.max(remoteCoins, safeGuestCoins);
   const mergedProgress = mergeProgressPreservingExisting(
     existingData.progress,
     guestSnapshot.progress,
@@ -153,9 +220,19 @@ export async function migrateGuestSessionToUserProfile(
     existingData.stats,
     guestSnapshot.stats,
   );
+  const mergedCoins = Math.max(remoteCoins, safeGuestCoins);
+  const coinDeltaToGrant = Math.max(0, mergedCoins - remoteCoins);
+
+  if (coinDeltaToGrant > 0) {
+    await applyCoinDeltaInChunksForCurrentUser(
+      userId,
+      coinDeltaToGrant,
+      "guest_migration",
+      guestMigrationOperationPrefix,
+    );
+  }
 
   const updatePayload: {
-    coins?: number;
     progress?: Record<string, unknown>;
     stats?: Record<string, unknown>;
     createdAt?: ReturnType<typeof serverTimestamp>;
@@ -167,10 +244,6 @@ export async function migrateGuestSessionToUserProfile(
     migratedFromGuest: true,
     migratedGuestId: guestSnapshot.guestId,
   };
-
-  if (mergedCoins > remoteCoins) {
-    updatePayload.coins = mergedCoins;
-  }
 
   if (mergedProgress) {
     updatePayload.progress = mergedProgress;
@@ -196,12 +269,21 @@ export async function ensureUserProfile(
   const safeSeedCoins = normalizeCoins(seedCoins);
   const userDoc = getUserDoc(userId);
   const snapshot = await getDoc(userDoc);
+  const profileSeedOperationPrefix = createProfileSeedOperationPrefix(userId);
 
   if (!snapshot.exists()) {
+    if (safeSeedCoins > 0) {
+      await applyCoinDeltaInChunksForCurrentUser(
+        userId,
+        safeSeedCoins,
+        "profile_seed",
+        profileSeedOperationPrefix,
+      );
+    }
+
     await setDoc(
       userDoc,
       {
-        coins: safeSeedCoins,
         createdAt: serverTimestamp(),
         lastLogin: serverTimestamp(),
       },
@@ -213,14 +295,22 @@ export async function ensureUserProfile(
 
   const data = snapshot.data();
   const remoteCoins = normalizeCoins(data.coins);
-  const mergedCoins = Math.max(remoteCoins, safeSeedCoins);
+  const seedCoinDelta = Math.max(0, safeSeedCoins - remoteCoins);
+
+  if (seedCoinDelta > 0) {
+    await applyCoinDeltaInChunksForCurrentUser(
+      userId,
+      seedCoinDelta,
+      "profile_seed",
+      profileSeedOperationPrefix,
+    );
+  }
+
   const hasCreatedAt = Object.prototype.hasOwnProperty.call(data, "createdAt");
   const updatePayload: {
-    coins: number;
     lastLogin: ReturnType<typeof serverTimestamp>;
     createdAt?: ReturnType<typeof serverTimestamp>;
   } = {
-    coins: mergedCoins,
     lastLogin: serverTimestamp(),
   };
 
@@ -230,7 +320,7 @@ export async function ensureUserProfile(
 
   await setDoc(userDoc, updatePayload, { merge: true });
 
-  return mergedCoins;
+  return Math.max(remoteCoins, safeSeedCoins);
 }
 
 export async function saveUserCoins(
@@ -238,13 +328,40 @@ export async function saveUserCoins(
   coins: number,
 ): Promise<void> {
   const safeCoins = normalizeCoins(coins);
+  const userDoc = getUserDoc(userId);
+  const snapshot = await getDoc(userDoc);
 
-  await setDoc(
-    getUserDoc(userId),
-    {
-      coins: safeCoins,
-      lastLogin: serverTimestamp(),
-    },
-    { merge: true },
-  );
+  const currentCoins = snapshot.exists()
+    ? normalizeCoins(snapshot.data().coins)
+    : 0;
+  const coinDelta = safeCoins - currentCoins;
+
+  if (coinDelta !== 0) {
+    const mutationReason: CoinMutationReason =
+      coinDelta > 0 ? "profile_seed" : "theme_purchase";
+    const operationPrefix = `save-coins-${toOperationToken(userId)}-${safeCoins.toString(36)}`;
+
+    await applyCoinDeltaInChunksForCurrentUser(
+      userId,
+      coinDelta,
+      mutationReason,
+      operationPrefix,
+    );
+  }
+
+  const updatePayload: {
+    lastLogin: ReturnType<typeof serverTimestamp>;
+    createdAt?: ReturnType<typeof serverTimestamp>;
+  } = {
+    lastLogin: serverTimestamp(),
+  };
+
+  if (
+    !snapshot.exists() ||
+    !Object.prototype.hasOwnProperty.call(snapshot.data(), "createdAt")
+  ) {
+    updatePayload.createdAt = serverTimestamp();
+  }
+
+  await setDoc(userDoc, updatePayload, { merge: true });
 }

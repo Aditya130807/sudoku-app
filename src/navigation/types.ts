@@ -1,5 +1,6 @@
 export type RootStackParamList = {
   Welcome: undefined;
+  VerifyEmail: { infoMessage?: string } | undefined;
   Home: undefined;
   Login: undefined;
   Signup: undefined;

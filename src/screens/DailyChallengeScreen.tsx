@@ -25,12 +25,11 @@ import {
   DailyChallengeProgress,
   DailyChallengeType,
   claimReward,
-  getDailyChallengeProgress,
-  getDailyChallenges,
+  getDailyChallengeSnapshot,
   getRewardCoinsForType,
-  resetDailyIfNewDate,
 } from "../services/dailyChallengeService";
 import { gameService } from "../services/gameService";
+import { useGameStore } from "../store/gameStore";
 import { hexToRgba } from "../utils/colorUtils";
 
 type Props = NativeStackScreenProps<RootStackParamList, "DailyChallenges">;
@@ -198,10 +197,10 @@ function DailyChallengeCard({
   const claimDisabled =
     !card.progress.completed || card.progress.claimed || isAnyClaiming;
   const claimLabel = card.progress.claimed
-    ? "Claimed"
+    ? "Reward claimed"
     : card.progress.completed
       ? "Claim Reward"
-      : "Claim Reward";
+      : "Complete challenge to claim";
   const statusColor = getStatusTextColor(styles, card.status);
 
   return (
@@ -286,7 +285,7 @@ function DailyChallengeCard({
 
 export default function DailyChallengeScreen({ navigation }: Props) {
   const { activeTheme } = useAppTheme();
-  const { addCoins } = useCoins();
+  const { refreshCoinsFromFirestore } = useCoins();
   const themeColors = activeTheme.colors;
   const styles = useMemo(
     () => createDailyChallengeStyles(themeColors),
@@ -303,6 +302,7 @@ export default function DailyChallengeScreen({ navigation }: Props) {
   const [claimingType, setClaimingType] = useState<DailyChallengeType | null>(
     null,
   );
+  const activeGame = useGameStore((state) => state.activeGame);
   const userLevel = gameService.getNextPlayableLevelId();
   const isUnlocked = userLevel >= DAILY_CHALLENGE_UNLOCK_LEVEL;
 
@@ -310,10 +310,9 @@ export default function DailyChallengeScreen({ navigation }: Props) {
     setIsLoading(true);
 
     try {
-      await resetDailyIfNewDate();
-      const [progress] = await Promise.all([getDailyChallengeProgress()]);
-      setDailyPuzzleSet(getDailyChallenges());
-      setDailyProgress(progress);
+      const snapshot = await getDailyChallengeSnapshot();
+      setDailyPuzzleSet(snapshot.challengeSet);
+      setDailyProgress(snapshot.progress);
     } catch {
       setNotice("Unable to load daily challenge data right now.");
     } finally {
@@ -379,13 +378,20 @@ export default function DailyChallengeScreen({ navigation }: Props) {
         const result = await claimReward(type);
 
         if (!result) {
+          setNotice("Try again later.");
+          return;
+        }
+
+        if (!result.ok) {
+          setDailyProgress(result.progress);
+          setNotice(result.message);
           return;
         }
 
         setDailyProgress(result.progress);
 
         if (result.totalAwarded > 0) {
-          addCoins(result.totalAwarded);
+          await refreshCoinsFromFirestore();
         }
 
         if (result.allCompleteBonus > 0) {
@@ -401,7 +407,7 @@ export default function DailyChallengeScreen({ navigation }: Props) {
         setClaimingType(null);
       }
     },
-    [addCoins, claimingType],
+    [claimingType, refreshCoinsFromFirestore],
   );
 
   const handleOpenChallengePuzzle = useCallback(
@@ -414,11 +420,11 @@ export default function DailyChallengeScreen({ navigation }: Props) {
 
       if (isAttemptLimitedChallenge(type)) {
         try {
-          const latestProgress = await getDailyChallengeProgress();
-          const latestEntry = latestProgress[type];
+          const latestSnapshot = await getDailyChallengeSnapshot();
+          const latestEntry = latestSnapshot.progress[type];
 
           attemptsRemaining = latestEntry?.attemptsRemaining;
-          setDailyProgress(latestProgress);
+          setDailyProgress(latestSnapshot.progress);
 
           if (
             latestEntry &&
@@ -501,6 +507,19 @@ export default function DailyChallengeScreen({ navigation }: Props) {
                     card.isAttemptLimited &&
                     !card.progress.completed &&
                     card.attemptsRemaining <= 0;
+                  const isChallengeInProgress =
+                    activeGame?.status === "playing" &&
+                    activeGame.isDailyChallenge === true &&
+                    activeGame.challengeType === card.type;
+                  const hasChallengeStarted =
+                    isChallengeInProgress ||
+                    (card.isAttemptLimited &&
+                      card.attemptsRemaining < DAILY_CHALLENGE_MAX_ATTEMPTS);
+                  const playButtonLabel = card.progress.completed
+                    ? "Completed"
+                    : hasChallengeStarted
+                      ? "Resume"
+                      : "Start Level";
 
                   return (
                     <View key={card.type}>
@@ -515,11 +534,7 @@ export default function DailyChallengeScreen({ navigation }: Props) {
                       <CustomButton
                         fullWidth
                         disabled={noAttemptsLeft}
-                        label={
-                          noAttemptsLeft
-                            ? "No attempts left"
-                            : `Play ${card.title}`
-                        }
+                        label={playButtonLabel}
                         onPress={() => handleOpenChallengePuzzle(card.type)}
                         style={styles.playButton}
                         variant="secondary"

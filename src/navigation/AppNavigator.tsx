@@ -18,12 +18,17 @@ import SettingsScreen from "../screens/SettingsScreen";
 import SignupScreen from "../screens/SignupScreen";
 import ThemeStoreScreen from "../screens/ThemeStoreScreen";
 import TutorialScreen from "../screens/TutorialScreen";
+import VerifyEmailScreen from "../screens/VerifyEmailScreen";
 import { storageService } from "../services/storageService";
 import { useUserStore } from "../store/userStore";
 import { navigationRef } from "./navigationRef";
 import { RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+type AppNavigatorProps = {
+  requiresEmailVerification?: boolean;
+};
 
 function getStatusBarStyle(backgroundColor: string): "dark" | "light" {
   const normalizedColor = backgroundColor.trim().replace("#", "");
@@ -47,7 +52,9 @@ function getStatusBarStyle(backgroundColor: string): "dark" | "light" {
   return luminance >= 0.62 ? "dark" : "light";
 }
 
-export default function AppNavigator() {
+export default function AppNavigator({
+  requiresEmailVerification = false,
+}: AppNavigatorProps) {
   const { activeTheme } = useAppTheme();
   const isSignedIn = useUserStore((state) => state.mode === "signed_in");
   const [hasEnteredApp, setHasEnteredApp] = useState(false);
@@ -86,7 +93,9 @@ export default function AppNavigator() {
     );
   }
 
-  const shouldStartAtHome = isSignedIn || hasEnteredApp;
+  const needsEmailVerification = requiresEmailVerification && !isSignedIn;
+  const shouldStartAtHome =
+    !needsEmailVerification && (isSignedIn || hasEnteredApp);
   const navigationTheme = {
     ...DefaultTheme,
     colors: {
@@ -111,10 +120,13 @@ export default function AppNavigator() {
       <NavigationContainer ref={navigationRef} theme={navigationTheme}>
         <StatusBar style={getStatusBarStyle(activeTheme.colors.background)} />
         <Stack.Navigator
-          key={`${isSignedIn ? "signed-in" : "signed-out"}-${
-            hasEnteredApp ? "entered" : "new"
-          }`}
-          initialRouteName={shouldStartAtHome ? "Home" : "Welcome"}
+          initialRouteName={
+            needsEmailVerification
+              ? "VerifyEmail"
+              : shouldStartAtHome
+                ? "Home"
+                : "Welcome"
+          }
           screenOptions={stackScreenOptions}
         >
           {!isSignedIn ? (
@@ -122,6 +134,7 @@ export default function AppNavigator() {
               <Stack.Screen name="Welcome" component={LoginScreen} />
               <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
               <Stack.Screen name="Signup" component={SignupScreen} />
+              <Stack.Screen name="VerifyEmail" component={VerifyEmailScreen} />
               <Stack.Screen
                 name="ForgotPassword"
                 component={ForgotPasswordScreen}

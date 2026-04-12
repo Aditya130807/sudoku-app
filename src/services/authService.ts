@@ -5,14 +5,15 @@ import {
   getAuth,
   GoogleAuthProvider,
   reauthenticateWithCredential,
+  sendEmailVerification,
   signInWithCredential,
   signInWithEmailAndPassword,
   signOut,
   User,
 } from "firebase/auth";
-import { deleteDoc, doc } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 
-import { auth, db } from "../firebase";
+import { auth, functions } from "../firebase";
 import { gameStore } from "../store/gameStore";
 import { userStore } from "../store/userStore";
 import { clearStoredThemeState } from "../utils/themeStorage";
@@ -23,6 +24,23 @@ import {
   migrateGuestSessionToUserProfile,
 } from "./userProfileService";
 
+const RECENT_INTERACTIVE_AUTH_WINDOW_MS = 60_000;
+let lastInteractiveAuthAttemptAtMs = 0;
+
+function markInteractiveAuthAttempt() {
+  lastInteractiveAuthAttemptAtMs = Date.now();
+}
+
+export function hasRecentInteractiveAuthAttempt(nowMs = Date.now()): boolean {
+  return (
+    nowMs - lastInteractiveAuthAttemptAtMs <= RECENT_INTERACTIVE_AUTH_WINDOW_MS
+  );
+}
+
+export function clearRecentInteractiveAuthAttempt() {
+  lastInteractiveAuthAttemptAtMs = 0;
+}
+
 async function runWithMigrationGate<T>(task: () => Promise<T>): Promise<T> {
   const endMigration = beginAuthMigration();
 
@@ -32,6 +50,8 @@ async function runWithMigrationGate<T>(task: () => Promise<T>): Promise<T> {
     endMigration();
   }
 }
+
+const deleteUserDataCallable = httpsCallable(functions, "deleteUserData");
 
 async function finalizeSignIn(user: { uid: string; email: string | null }) {
   userStore.setUser({
@@ -86,7 +106,13 @@ type AuthDeletionError = Error & {
   cause?: unknown;
 };
 
-const PROFILE_DELETE_RETRY_DELAYS_MS = [300, 900, 1800] as const;
+type EmailVerificationErrorCode =
+  | "auth/email-not-verified"
+  | "auth/no-current-user";
+
+type EmailVerificationError = Error & {
+  code: EmailVerificationErrorCode;
+};
 
 function createAccountDeletionError(cause?: unknown): AccountDeletionError {
   const error = new Error(
@@ -111,6 +137,22 @@ function createAuthDeletionError(cause?: unknown): AuthDeletionError {
     error.cause = cause;
   }
 
+  return error;
+}
+
+function createEmailNotVerifiedError(): EmailVerificationError {
+  const error = new Error(
+    "Please verify your email before continuing.",
+  ) as EmailVerificationError;
+  error.code = "auth/email-not-verified";
+  return error;
+}
+
+function createNoCurrentUserError(): EmailVerificationError {
+  const error = new Error(
+    "No authenticated user found. Please sign in again.",
+  ) as EmailVerificationError;
+  error.code = "auth/no-current-user";
   return error;
 }
 
@@ -139,12 +181,6 @@ function isRequiresRecentLoginError(error: unknown): boolean {
   return getErrorCode(error) === "auth/requires-recent-login";
 }
 
-function sleep(delayMs: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
-  });
-}
-
 function createGuestLoginError(cause?: unknown): GuestLoginError {
   const error = new Error(
     "Unable to continue as guest right now. Please try again.",
@@ -156,31 +192,6 @@ function createGuestLoginError(cause?: unknown): GuestLoginError {
   }
 
   return error;
-}
-
-async function deleteProfileDocumentWithRetry(userId: string): Promise<void> {
-  let lastError: unknown;
-
-  for (
-    let attempt = 0;
-    attempt < PROFILE_DELETE_RETRY_DELAYS_MS.length;
-    attempt += 1
-  ) {
-    try {
-      await deleteDoc(doc(db, "users", userId));
-      return;
-    } catch (error) {
-      lastError = error;
-
-      if (attempt === PROFILE_DELETE_RETRY_DELAYS_MS.length - 1) {
-        break;
-      }
-
-      await sleep(PROFILE_DELETE_RETRY_DELAYS_MS[attempt]);
-    }
-  }
-
-  throw createAccountDeletionError(lastError);
 }
 
 async function reauthenticateBeforeDelete(
@@ -245,17 +256,61 @@ export const authService = {
   // 🟢 Email login
   async login(email: string, password: string) {
     return runWithMigrationGate(async () => {
-      const res = await signInWithEmailAndPassword(auth, email, password);
-      return finalizeSignIn(res.user);
+      markInteractiveAuthAttempt();
+
+      try {
+        const res = await signInWithEmailAndPassword(auth, email, password);
+        await res.user.reload();
+
+        if (!res.user.emailVerified) {
+          throw createEmailNotVerifiedError();
+        }
+
+        return finalizeSignIn(res.user);
+      } catch (error) {
+        throw error;
+      }
     });
   },
 
   // 🟢 Signup
   async signUp(email: string, password: string) {
     return runWithMigrationGate(async () => {
+      markInteractiveAuthAttempt();
+
       const res = await createUserWithEmailAndPassword(auth, email, password);
-      return finalizeSignIn(res.user);
+      await sendEmailVerification(res.user);
+      await signOut(auth);
+      return res.user;
     });
+  },
+
+  async refreshCurrentUserAfterEmailVerification() {
+    return runWithMigrationGate(async () => {
+      const currentUser = auth.currentUser;
+
+      if (!currentUser) {
+        throw createNoCurrentUserError();
+      }
+
+      await currentUser.reload();
+
+      if (!currentUser.emailVerified) {
+        throw createEmailNotVerifiedError();
+      }
+
+      return finalizeSignIn(currentUser);
+    });
+  },
+
+  async resendEmailVerification() {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      throw createNoCurrentUserError();
+    }
+
+    await sendEmailVerification(currentUser);
   },
 
   // 🔵 Google login
@@ -289,13 +344,13 @@ export const authService = {
         throw new Error("No signed-in account was found.");
       }
 
-      const userId = currentUser.uid;
-
       await reauthenticateBeforeDelete(currentUser, options);
 
       try {
-        await deleteProfileDocumentWithRetry(userId);
+        await deleteUserDataCallable();
       } catch (error) {
+        console.error("Delete failed", error);
+
         if (getErrorCode(error) === "account/profile-delete-failed") {
           throw error;
         }
@@ -306,6 +361,8 @@ export const authService = {
       try {
         await deleteUser(currentUser);
       } catch (error) {
+        console.error("Delete failed", error);
+
         if (isRequiresRecentLoginError(error)) {
           throw error;
         }

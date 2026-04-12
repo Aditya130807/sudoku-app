@@ -9,6 +9,7 @@ service cloud.firestore {
     function isValidUserData(data) {
       return data.keys().hasOnly([
           'coins',
+          'lastCoinDelta',
           'progress',
           'stats',
           'createdAt',
@@ -16,9 +17,8 @@ service cloud.firestore {
           'migratedFromGuest',
           'migratedGuestId',
         ])
-        && data.keys().hasAll(['coins'])
-        && data.coins is int
-        && data.coins >= 0
+        && (!('coins' in data) || (data.coins is int && data.coins >= 0))
+        && (!('lastCoinDelta' in data) || data.lastCoinDelta is int)
         && (!('progress' in data) || data.progress is map)
         && (!('stats' in data) || data.stats is map)
         && (!('createdAt' in data) || data.createdAt is timestamp)
@@ -27,10 +27,200 @@ service cloud.firestore {
         && (!('migratedGuestId' in data) || data.migratedGuestId is string);
     }
 
+    function hasLockedCoinFields(nextData, currentData) {
+      return (
+        ('coins' in currentData)
+          ? ('coins' in nextData && nextData.coins == currentData.coins)
+          : !('coins' in nextData)
+      )
+        && (
+          ('lastCoinDelta' in currentData)
+            ? (
+              'lastCoinDelta' in nextData
+              && nextData.lastCoinDelta == currentData.lastCoinDelta
+            )
+            : !('lastCoinDelta' in nextData)
+        );
+    }
+
+    function isValidDailyChallengeEntry(entry, reward, levelId, attemptsRemaining) {
+      return entry is map
+        && entry.keys().hasOnly([
+          'completed',
+          'claimed',
+          'reward',
+          'levelId',
+          'attemptsRemaining',
+        ])
+        && entry.completed is bool
+        && entry.claimed is bool
+        && (!entry.claimed || entry.completed)
+        && entry.reward is int
+        && entry.reward == reward
+        && (
+          (levelId == null && entry.levelId == null)
+          || (levelId is int && entry.levelId is int && entry.levelId == levelId)
+        )
+        && (
+          (attemptsRemaining == null && entry.attemptsRemaining == null)
+          || (
+            attemptsRemaining is int
+            && entry.attemptsRemaining is int
+            && entry.attemptsRemaining >= 0
+            && entry.attemptsRemaining <= attemptsRemaining
+          )
+        );
+    }
+
+    function isValidDailyChallengeSet(challengeSet) {
+      return challengeSet is map
+        && challengeSet.keys().hasOnly([
+          'speed',
+          'noHint',
+          'mystery',
+          'featuredDailyBoard',
+        ])
+        && challengeSet.speed is int
+        && challengeSet.speed > 0
+        && challengeSet.noHint is int
+        && challengeSet.noHint > 0
+        && challengeSet.mystery is int
+        && challengeSet.mystery > 0
+        && challengeSet.featuredDailyBoard is int
+        && challengeSet.featuredDailyBoard > 0;
+    }
+
+    function isValidDailyChallengesMap(data) {
+      return data.challenges is map
+        && data.challenges.keys().hasOnly([
+          'play_1_game',
+          'win_1_game',
+          'featured_daily_board',
+          'speed',
+          'noHint',
+          'mystery',
+        ])
+        && isValidDailyChallengeEntry(
+          data.challenges.play_1_game,
+          10,
+          null,
+          null,
+        )
+        && isValidDailyChallengeEntry(
+          data.challenges.win_1_game,
+          20,
+          null,
+          null,
+        )
+        && isValidDailyChallengeEntry(
+          data.challenges.featured_daily_board,
+          25,
+          data.challengeSet.featuredDailyBoard,
+          null,
+        )
+        && isValidDailyChallengeEntry(
+          data.challenges.speed,
+          10,
+          data.challengeSet.speed,
+          2,
+        )
+        && isValidDailyChallengeEntry(
+          data.challenges.noHint,
+          15,
+          data.challengeSet.noHint,
+          2,
+        )
+        && isValidDailyChallengeEntry(
+          data.challenges.mystery,
+          20,
+          data.challengeSet.mystery,
+          null,
+        );
+    }
+
+    function hasValidStatusTransition(before, after) {
+      return (after.completed == before.completed || (before.completed == false && after.completed == true))
+        && (after.claimed == before.claimed || (before.claimed == false && after.claimed == true))
+        && (!after.claimed || after.completed);
+    }
+
+    function hasValidChallengeTransition(before, after) {
+      return hasValidStatusTransition(before, after)
+        && before.reward == after.reward
+        && before.levelId == after.levelId
+        && (
+          (before.attemptsRemaining == null && after.attemptsRemaining == null)
+          || (
+            before.attemptsRemaining is int
+            && after.attemptsRemaining is int
+            && after.attemptsRemaining >= 0
+            && after.attemptsRemaining <= before.attemptsRemaining
+          )
+        );
+    }
+
+    function isValidDailyChallengeData(data, dateKey) {
+      return data.keys().hasOnly([
+          'date',
+          'challengeSet',
+          'challenges',
+          'allCompleteBonusClaimed',
+          'streakCount',
+          'lastClaimDate',
+          'createdAt',
+          'lastUpdated',
+        ])
+        && data.keys().hasAll([
+          'date',
+          'challengeSet',
+          'challenges',
+          'allCompleteBonusClaimed',
+          'streakCount',
+        ])
+        && data.date is string
+        && data.date == dateKey
+        && isValidDailyChallengeSet(data.challengeSet)
+        && isValidDailyChallengesMap(data)
+        && data.allCompleteBonusClaimed is bool
+        && data.streakCount is int
+        && data.streakCount >= 0
+        && (!('lastClaimDate' in data) || data.lastClaimDate == null || data.lastClaimDate is string)
+        && (!('createdAt' in data) || data.createdAt is timestamp)
+        && (!('lastUpdated' in data) || data.lastUpdated is timestamp);
+    }
+
+    function hasValidDailyChallengeTransition(nextData, currentData) {
+      return nextData.date == currentData.date
+        && nextData.challengeSet == currentData.challengeSet
+        && (!currentData.allCompleteBonusClaimed || nextData.allCompleteBonusClaimed)
+        && hasValidChallengeTransition(currentData.challenges.play_1_game, nextData.challenges.play_1_game)
+        && hasValidChallengeTransition(currentData.challenges.win_1_game, nextData.challenges.win_1_game)
+        && hasValidChallengeTransition(currentData.challenges.featured_daily_board, nextData.challenges.featured_daily_board)
+        && hasValidChallengeTransition(currentData.challenges.speed, nextData.challenges.speed)
+        && hasValidChallengeTransition(currentData.challenges.noHint, nextData.challenges.noHint)
+        && hasValidChallengeTransition(currentData.challenges.mystery, nextData.challenges.mystery);
+    }
+
     match /users/{userId} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId)
-        && (request.resource == null || isValidUserData(request.resource.data));
+
+      allow create: if isOwner(userId)
+        && request.resource != null
+        && isValidUserData(request.resource.data)
+        && !('coins' in request.resource.data)
+        && !('lastCoinDelta' in request.resource.data);
+
+      allow update: if isOwner(userId)
+        && request.resource != null
+        && isValidUserData(request.resource.data)
+        && hasLockedCoinFields(request.resource.data, resource.data);
+
+      allow delete: if isOwner(userId);
+
+      match /dailyChallenges/{dateKey} {
+        allow read: if isOwner(userId);
+        allow write: if false;
+      }
     }
 
     match /{document=**} {

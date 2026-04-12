@@ -1,5 +1,5 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -26,6 +26,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "Signup">;
 const fixedAuthTheme = getThemeConfig(DEFAULT_THEME_ID).colors;
 
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
+const SLOW_SIGNUP_MESSAGE_DELAY_MS = 5000;
+const SIGNUP_REQUEST_TIMEOUT_MS = 18000;
 
 function getEmailError(value: string) {
   const trimmedValue = value.trim();
@@ -76,6 +78,34 @@ export default function SignupScreen({ navigation }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("");
+  const slowMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const requestTimeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const signupAttemptRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  const clearSignupTimers = () => {
+    if (slowMessageTimerRef.current) {
+      clearTimeout(slowMessageTimerRef.current);
+      slowMessageTimerRef.current = null;
+    }
+
+    if (requestTimeoutTimerRef.current) {
+      clearTimeout(requestTimeoutTimerRef.current);
+      requestTimeoutTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      clearSignupTimers();
+    };
+  }, []);
 
   const isFormValid =
     !getEmailError(email) &&
@@ -132,21 +162,87 @@ export default function SignupScreen({ navigation }: Props) {
       return;
     }
 
+    signupAttemptRef.current += 1;
+    const currentAttempt = signupAttemptRef.current;
+
+    clearSignupTimers();
+    setLoadingMessage("Sending verification email...");
     setLoading(true);
 
+    slowMessageTimerRef.current = setTimeout(() => {
+      if (
+        !isMountedRef.current ||
+        currentAttempt !== signupAttemptRef.current
+      ) {
+        return;
+      }
+
+      setLoadingMessage("This is taking longer than usual...");
+    }, SLOW_SIGNUP_MESSAGE_DELAY_MS);
+
+    requestTimeoutTimerRef.current = setTimeout(() => {
+      if (
+        !isMountedRef.current ||
+        currentAttempt !== signupAttemptRef.current
+      ) {
+        return;
+      }
+
+      signupAttemptRef.current += 1;
+      clearSignupTimers();
+      setLoading(false);
+      setLoadingMessage("");
+      setFormError("Request is taking too long. Please try again.");
+    }, SIGNUP_REQUEST_TIMEOUT_MS);
+
     try {
-      await authService.signUp(email.trim(), password);
+      const createdUser = await authService.signUp(email.trim(), password);
+
+      if (
+        !isMountedRef.current ||
+        currentAttempt !== signupAttemptRef.current
+      ) {
+        return;
+      }
+
+      if (!createdUser?.uid) {
+        setFormError("Unable to create your account. Please try again.");
+        return;
+      }
 
       navigation.reset({
         index: 0,
-        routes: [{ name: "Home" }],
+        routes: [
+          {
+            name: "VerifyEmail",
+            params: {
+              infoMessage: "Verification email sent. Please check your inbox.",
+            },
+          },
+        ],
       });
     } catch (error: unknown) {
+      if (
+        !isMountedRef.current ||
+        currentAttempt !== signupAttemptRef.current
+      ) {
+        return;
+      }
+
       const errorCode = (error as { code?: string }).code;
       logAuthError("signup", error);
       setFormError(getAuthErrorMessage(errorCode));
     } finally {
+      if (
+        !isMountedRef.current ||
+        currentAttempt !== signupAttemptRef.current
+      ) {
+        return;
+      }
+
+      clearSignupTimers();
       setLoading(false);
+      setLoadingMessage("");
     }
   };
 
@@ -187,9 +283,10 @@ export default function SignupScreen({ navigation }: Props) {
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.heading}>Create Account</Text>
+              <Text style={styles.heading}>Verify Email</Text>
               <Text style={styles.subheading}>
-                Sign up to save your journey and jump back into your next board.
+                Enter your details to create your account and receive a
+                verification email.
               </Text>
 
               <View style={styles.form}>
@@ -307,7 +404,9 @@ export default function SignupScreen({ navigation }: Props) {
                     <ActivityIndicator color={COLORS.surface} size="small" />
                   ) : null
                 }
-                label={loading ? "Creating Account..." : "Create Account"}
+                label={
+                  loading ? loadingMessage || "Please wait..." : "Verify Email"
+                }
                 onPress={handleSignup}
                 style={styles.primaryButton}
               />

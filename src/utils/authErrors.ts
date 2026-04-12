@@ -38,15 +38,17 @@ function getAuthErrorDetailsMessage(error: unknown): string | undefined {
 export function getAuthErrorMessage(code: string | undefined) {
   switch (code) {
     case "auth/email-already-in-use":
-      return "This email is already registered. Please log in instead.";
+      return "This email is already registered. Please log in.";
     case "auth/invalid-email":
       return "Please enter a valid email address.";
     case "auth/user-not-found":
-      return "No account found with this email.";
     case "auth/wrong-password":
-      return "Incorrect password. Please try again.";
     case "auth/invalid-credential":
       return "Invalid email or password.";
+    case "auth/email-not-verified":
+      return "Please verify your email before continuing.";
+    case "auth/no-current-user":
+      return "Please sign in again to continue.";
     case "auth/weak-password":
       return "Password should be at least 6 characters.";
     case "auth/network-request-failed":

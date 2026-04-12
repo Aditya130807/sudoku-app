@@ -1,26 +1,44 @@
 {
   "project_info": {
-    "project_number": "951227824589",
-    "project_id": "sudoku-ryve",
-    "storage_bucket": "sudoku-ryve.firebasestorage.app"
+    "project_number": "312094184536",
+    "project_id": "sudoku-ryve-d13af",
+    "storage_bucket": "sudoku-ryve-d13af.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:951227824589:android:70eaaffeba2c0a7d1fac84",
+        "mobilesdk_app_id": "1:312094184536:android:21bb0882380d0ef562a62d",
         "android_client_info": {
-          "package_name": "com.Aditya.sudokuRyve"
+          "package_name": "com.pandey_sachin11.sudokuapp"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "312094184536-7fp1gshpja07t2o97ftbuc539qqhincf.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.pandey_sachin11.sudokuapp",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyAy9q3mI5ARiUVTvKst-nobeo9bdB4ro30"
+          "current_key": "AIzaSyBOal2rqLAvsvBuh04ZYx3PKS7pzNqKhR8"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "312094184536-4si2t0g994khbab2n53h0odrmoukepa5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

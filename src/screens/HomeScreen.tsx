@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useEffect, useState } from "react";
+import { BannerAd, BannerAdSize } from "react-native-google-mobile-ads";
 import {
   Alert,
   NativeModules,
@@ -27,6 +28,7 @@ import { RootStackParamList } from "../navigation/types";
 import {
   bannerAdsEnabled,
   bannerAdUnitId,
+  getAdRequestOptions,
   initializeAds,
   isRewardedLoaded,
   preloadRewardedAd,
@@ -51,10 +53,8 @@ let bannerAdaptiveSize: any = null;
 
 if (NativeModules.RNGoogleMobileAdsModule) {
   try {
-    const adsModule =
-      require("react-native-google-mobile-ads") as typeof import("react-native-google-mobile-ads");
-    BannerAdComponent = adsModule.BannerAd;
-    bannerAdaptiveSize = adsModule.BannerAdSize.ANCHORED_ADAPTIVE_BANNER;
+    BannerAdComponent = BannerAd;
+    bannerAdaptiveSize = BannerAdSize.ANCHORED_ADAPTIVE_BANNER;
   } catch {
     BannerAdComponent = null;
     bannerAdaptiveSize = null;
@@ -103,7 +103,17 @@ export default function HomeScreen({ navigation }: Props) {
     navigationRef.isReady(),
   );
   const hasResumablePuzzle =
-    isGameStateHydrated && activeGame?.status === "playing";
+    isGameStateHydrated &&
+    activeGame?.status === "playing" &&
+    !activeGame.isDailyChallenge;
+  const hasStartedAnyLevel = Object.values(progress ?? {}).some(
+    (entry) => entry?.status === "in_progress" || entry?.status === "completed",
+  );
+  const startNextLevelButtonLabel = !isGameStateHydrated
+    ? "Loading..."
+    : hasStartedAnyLevel
+      ? "Play Next Level"
+      : "Start Level";
 
   useEffect(() => {
     return subscribeRewardedAdState(setIsRewardedAdReady);
@@ -144,7 +154,7 @@ export default function HomeScreen({ navigation }: Props) {
         }
 
         await preloadRewardedAd();
-      } catch (error) {}
+      } catch {}
     };
 
     void loadRewardedAdSafely();
@@ -168,7 +178,7 @@ export default function HomeScreen({ navigation }: Props) {
         try {
           await initializeAds();
           await preloadRewardedAd();
-        } catch (error) {}
+        } catch {}
       })();
     }, 1000);
 
@@ -202,10 +212,19 @@ export default function HomeScreen({ navigation }: Props) {
       const didEarnReward = await showRewardedAd();
 
       if (didEarnReward) {
-        addCoins(BONUS_REWARDED_AD_COINS);
-        setRewardNotice(
-          `+${BONUS_REWARDED_AD_COINS} coins added to your wallet.`,
-        );
+        const didApplyReward = await addCoins(BONUS_REWARDED_AD_COINS, {
+          reason: "rewarded_ad",
+        });
+
+        if (didApplyReward) {
+          setRewardNotice(
+            `+${BONUS_REWARDED_AD_COINS} coins added to your wallet.`,
+          );
+        } else {
+          setRewardNotice(
+            "Reward could not be applied right now. Please try again shortly.",
+          );
+        }
       } else {
         setRewardNotice("No bonus granted because the ad did not complete.");
       }
@@ -238,7 +257,11 @@ export default function HomeScreen({ navigation }: Props) {
   };
 
   const handleResumePuzzle = () => {
-    if (!activeGame || activeGame.status !== "playing") {
+    if (
+      !activeGame ||
+      activeGame.status !== "playing" ||
+      activeGame.isDailyChallenge
+    ) {
       Alert.alert("No puzzle to resume");
       return;
     }
@@ -325,7 +348,7 @@ export default function HomeScreen({ navigation }: Props) {
             ) : (
               <CustomButton
                 disabled={!isGameStateHydrated}
-                label={isGameStateHydrated ? "Play Next Level" : "Loading..."}
+                label={startNextLevelButtonLabel}
                 onPress={handleStartNextLevel}
                 icon={<Ionicons color={COLORS.surface} name="play" size={18} />}
                 style={styles.heroButton}
@@ -544,7 +567,7 @@ export default function HomeScreen({ navigation }: Props) {
           ]}
         >
           <BannerAdComponent
-            requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+            requestOptions={getAdRequestOptions()}
             size={bannerAdaptiveSize}
             unitId={bannerAdUnitId}
           />

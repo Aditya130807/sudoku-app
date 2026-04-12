@@ -72,16 +72,26 @@ export default function AuthChoiceScreen({ navigation }: Props) {
     setIsLoginLoading(true);
 
     try {
-      await authService.login(email.trim(), password);
+      const signedInUser = await authService.login(email.trim(), password);
+
+      if (!signedInUser?.uid) {
+        setFormError("Unable to sign in. Please try again.");
+        return;
+      }
+
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playLoginSound();
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "Home" }],
-      });
     } catch (error: unknown) {
       const errorCode = (error as { code?: string }).code;
       logAuthError("login", error);
+
+      if (errorCode === "auth/email-not-verified") {
+        navigation.navigate("VerifyEmail", {
+          infoMessage: "Please verify your email before continuing.",
+        });
+        return;
+      }
+
       setFormError(getAuthErrorMessage(errorCode));
     } finally {
       setIsLoginLoading(false);

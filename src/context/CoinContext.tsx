@@ -1,4 +1,5 @@
 import React, {
+  useCallback,
   createContext,
   useContext,
   useEffect,
@@ -7,14 +8,23 @@ import React, {
   useState,
 } from "react";
 
-import { persistCoinsForCurrentUser } from "../services/userDataService";
+import {
+  applyCoinDeltaForCurrentUser,
+  refreshCoinsFromFirestoreForCurrentUser,
+  type CoinMutationReason,
+} from "../services/userDataService";
+import { storageService } from "../services/storageService";
 import { useAuthState } from "./AuthStateContext";
 
 interface CoinContextValue {
   coins: number;
   isHydrated: boolean;
-  addCoins: (amount: number) => void;
-  spendCoins: (amount: number) => boolean;
+  addCoins: (
+    amount: number,
+    options?: { reason?: CoinMutationReason },
+  ) => Promise<boolean>;
+  spendCoins: (amount: number) => Promise<boolean>;
+  refreshCoinsFromFirestore: () => Promise<number>;
   resetCoins: () => void;
 }
 
@@ -28,16 +38,31 @@ function normalizeCoinAmount(amount: number): number {
   return Math.floor(amount);
 }
 
+function normalizeCoinBalance(amount: number): number {
+  if (!Number.isFinite(amount) || amount < 0) {
+    return 0;
+  }
+
+  return Math.floor(amount);
+}
+
 export function CoinProvider({ children }: { children: React.ReactNode }) {
-  const { authSyncVersion, latestUserData } = useAuthState();
+  const { authSyncVersion, latestUserData, userId } = useAuthState();
   const [coins, setCoins] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const coinsRef = useRef(0);
-  const skipNextPersistRef = useRef(false);
+
+  const setTrustedCoins = useCallback((amount: number) => {
+    const safeAmount = normalizeCoinBalance(amount);
+    coinsRef.current = safeAmount;
+    setCoins(safeAmount);
+
+    void storageService.saveCoins(safeAmount).catch(() => {
+      // Keep wallet rendering stable if local persistence is unavailable.
+    });
+  }, []);
 
   useEffect(() => {
-    skipNextPersistRef.current = true;
-
     if (latestUserData) {
       coinsRef.current = latestUserData.coins;
       setCoins(latestUserData.coins);
@@ -51,52 +76,73 @@ export function CoinProvider({ children }: { children: React.ReactNode }) {
     setIsHydrated(true);
   }, [authSyncVersion, latestUserData]);
 
-  useEffect(() => {
-    if (!isHydrated) {
-      return;
-    }
+  const refreshCoinsFromFirestore = useCallback(async () => {
+    const trustedCoins = await refreshCoinsFromFirestoreForCurrentUser();
+    setTrustedCoins(trustedCoins);
+    return trustedCoins;
+  }, [setTrustedCoins]);
 
-    if (skipNextPersistRef.current) {
-      skipNextPersistRef.current = false;
-      return;
-    }
+  const addCoins = useCallback(
+    async (amount: number, options?: { reason?: CoinMutationReason }) => {
+      const safeAmount = normalizeCoinAmount(amount);
 
-    void persistCoinsForCurrentUser(coins).catch(() => {
-      // Keep wallet interactions working even when persistence fails.
-    });
-  }, [coins, isHydrated]);
+      if (safeAmount <= 0) {
+        return false;
+      }
 
-  const addCoins = (amount: number) => {
-    const safeAmount = normalizeCoinAmount(amount);
+      try {
+        await applyCoinDeltaForCurrentUser(safeAmount, {
+          reason: options?.reason,
+        });
+        await refreshCoinsFromFirestore();
+        return true;
+      } catch {
+        if (userId) {
+          await refreshCoinsFromFirestore();
+        }
+        return false;
+      }
+    },
+    [refreshCoinsFromFirestore, userId],
+  );
 
-    if (safeAmount <= 0) {
-      return;
-    }
+  const spendCoins = useCallback(
+    async (amount: number) => {
+      const safeAmount = normalizeCoinAmount(amount);
 
-    setCoins((currentCoins) => {
-      const nextCoins = currentCoins + safeAmount;
-      coinsRef.current = nextCoins;
-      return nextCoins;
-    });
-  };
+      if (safeAmount <= 0) {
+        return false;
+      }
 
-  const spendCoins = (amount: number) => {
-    const safeAmount = normalizeCoinAmount(amount);
+      if (coinsRef.current < safeAmount && userId) {
+        await refreshCoinsFromFirestore();
+      }
 
-    if (safeAmount <= 0 || coinsRef.current < safeAmount) {
-      return false;
-    }
+      if (coinsRef.current < safeAmount) {
+        return false;
+      }
 
-    coinsRef.current -= safeAmount;
-    setCoins((currentCoins) => Math.max(0, currentCoins - safeAmount));
-    return true;
-  };
+      try {
+        await applyCoinDeltaForCurrentUser(-safeAmount, {
+          reason: "theme_purchase",
+        });
+        await refreshCoinsFromFirestore();
+        return true;
+      } catch {
+        if (userId) {
+          await refreshCoinsFromFirestore();
+        }
+        return false;
+      }
+    },
+    [refreshCoinsFromFirestore, userId],
+  );
 
-  const resetCoins = () => {
+  const resetCoins = useCallback(() => {
     coinsRef.current = 0;
     setCoins(0);
     setIsHydrated(true);
-  };
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -104,9 +150,17 @@ export function CoinProvider({ children }: { children: React.ReactNode }) {
       isHydrated,
       addCoins,
       spendCoins,
+      refreshCoinsFromFirestore,
       resetCoins,
     }),
-    [coins, isHydrated],
+    [
+      addCoins,
+      coins,
+      isHydrated,
+      refreshCoinsFromFirestore,
+      resetCoins,
+      spendCoins,
+    ],
   );
 
   return <CoinContext.Provider value={value}>{children}</CoinContext.Provider>;

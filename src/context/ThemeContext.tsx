@@ -121,11 +121,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     ]);
     const requiresCoins = theme.price > 0;
 
-    if (requiresCoins && !spendCoins(theme.price)) {
-      return {
-        ok: false,
-        message: "Not enough coins.",
-      };
+    if (requiresCoins) {
+      const didSpendCoins = await spendCoins(theme.price);
+
+      if (!didSpendCoins) {
+        return {
+          ok: false,
+          message: "Not enough coins.",
+        };
+      }
     }
 
     try {
@@ -142,7 +146,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       };
     } catch {
       if (requiresCoins) {
-        addCoins(theme.price);
+        await addCoins(theme.price, { reason: "theme_refund" });
       }
 
       return {

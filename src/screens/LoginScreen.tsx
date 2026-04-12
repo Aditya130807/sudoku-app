@@ -1,6 +1,6 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import CustomButton from "../components/CustomButton";
@@ -23,7 +23,10 @@ export default function LoginScreen({ navigation }: Props) {
       edges={["top", "bottom"]}
       style={[styles.safeArea, { backgroundColor: fixedAuthTheme.background }]}
     >
-      <View style={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.heroCard}>
           <Image
             resizeMode="cover"
@@ -67,7 +70,7 @@ export default function LoginScreen({ navigation }: Props) {
             onPress={() => navigation.navigate("AuthChoice")}
           />
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -77,7 +80,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   container: {
-    flex: 1,
+    flexGrow: 1,
     padding: 20,
     justifyContent: "space-evenly", // 🔥 KEY
   },

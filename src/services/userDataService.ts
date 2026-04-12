@@ -1,7 +1,8 @@
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 
 import { LEVELS } from "../constants/levels";
-import { auth, db } from "../firebase";
+import { auth, db, functions } from "../firebase";
 import { LevelProgress, LevelStatus } from "../game/types";
 import { gameStore } from "../store/gameStore";
 import { userStore } from "../store/userStore";
@@ -99,6 +100,23 @@ function normalizeInteger(
 function normalizeCoins(value: unknown): number {
   return normalizeInteger(value, 0, 0);
 }
+
+function normalizeCoinDelta(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.floor(value);
+}
+
+export type CoinMutationReason =
+  | "rewarded_ad"
+  | "theme_purchase"
+  | "theme_refund"
+  | "guest_migration"
+  | "profile_seed";
+
+const applyCoinDeltaCallable = httpsCallable(functions, "applyCoinDelta");
 
 function createDefaultProgress(): Record<number, LevelProgress> {
   return LEVELS.reduce<Record<number, LevelProgress>>((result, level) => {
@@ -250,6 +268,37 @@ function getUserDocument(userId: string) {
   return doc(db, "users", userId);
 }
 
+function createOperationId(prefix: string): string {
+  const randomPart = Math.random().toString(36).slice(2, 12);
+  return `${prefix}-${Date.now().toString(36)}-${randomPart}`;
+}
+
+export async function refreshCoinsFromFirestoreForCurrentUser(): Promise<number> {
+  const currentUserId = auth.currentUser?.uid ?? null;
+
+  if (!currentUserId) {
+    return storageService.loadCoins();
+  }
+
+  await waitForAuthMigrationToFinish();
+
+  if (shouldBlockRemoteSync(currentUserId)) {
+    return storageService.loadCoins();
+  }
+
+  try {
+    const snapshot = await getDoc(getUserDocument(currentUserId));
+    const remoteCoins = snapshot.exists()
+      ? normalizeCoins(snapshot.data().coins)
+      : 0;
+
+    await storageService.saveCoins(remoteCoins);
+    return remoteCoins;
+  } catch {
+    return storageService.loadCoins();
+  }
+}
+
 async function saveRemoteUserData(
   userId: string,
   payload: Partial<PersistedUserDataSnapshot>,
@@ -263,10 +312,6 @@ async function saveRemoteUserData(
   const documentPayload: Record<string, unknown> = {
     lastLogin: serverTimestamp(),
   };
-
-  if (typeof payload.coins === "number") {
-    documentPayload.coins = normalizeCoins(payload.coins);
-  }
 
   if (payload.progress) {
     documentPayload.progress = payload.progress;
@@ -423,9 +468,30 @@ export async function persistProgressAndStatsForCurrentUser(): Promise<void> {
 
 export async function persistCoinsForCurrentUser(coins: number): Promise<void> {
   const safeCoins = normalizeCoins(coins);
-  const currentUserId = auth.currentUser?.uid ?? null;
+  const currentCoins = await storageService.loadCoins();
+  const coinDelta = safeCoins - currentCoins;
 
-  await storageService.saveCoins(safeCoins);
+  if (coinDelta === 0) {
+    return;
+  }
+
+  await applyCoinDeltaForCurrentUser(coinDelta);
+}
+
+export async function applyCoinDeltaForCurrentUser(
+  delta: number,
+  options?: {
+    reason?: CoinMutationReason;
+    operationId?: string;
+  },
+): Promise<void> {
+  const safeDelta = normalizeCoinDelta(delta);
+
+  if (safeDelta === 0) {
+    return;
+  }
+
+  const currentUserId = auth.currentUser?.uid ?? null;
 
   if (currentUserId) {
     await waitForAuthMigrationToFinish();
@@ -434,17 +500,27 @@ export async function persistCoinsForCurrentUser(coins: number): Promise<void> {
       return;
     }
 
-    await saveRemoteUserData(currentUserId, {
-      coins: safeCoins,
+    const resolvedReason: CoinMutationReason =
+      options?.reason ?? (safeDelta < 0 ? "theme_purchase" : "rewarded_ad");
+
+    await applyCoinDeltaCallable({
+      delta: safeDelta,
+      reason: resolvedReason,
+      operationId: options?.operationId ?? createOperationId(resolvedReason),
     });
+    await refreshCoinsFromFirestoreForCurrentUser();
     return;
   }
+
+  const currentCoins = await storageService.loadCoins();
+  const nextCoins = Math.max(0, currentCoins + safeDelta);
+  await storageService.saveCoins(nextCoins);
 
   const existingGuestData = await storageService.loadGuestUserData();
 
   await storageService.saveGuestUserData({
     ...existingGuestData,
-    coins: safeCoins,
+    coins: nextCoins,
   });
 }
 
